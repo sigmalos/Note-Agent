@@ -1,9 +1,11 @@
-import { Notice, Platform, Plugin, type WorkspaceLeaf } from "obsidian";
+import { MarkdownView, Menu, Notice, Platform, Plugin, type Editor, type MenuItem, type WorkspaceLeaf } from "obsidian";
 import { SessionStore } from "./chat/session-manager";
 import { PLUGIN_ID, VIEW_TYPE_CHAT } from "./constants";
 import { ObsidianContext } from "./context/obsidian-context";
 import { createFetchTransport, createNodeTransport, type HttpTransport } from "./core/http";
 import { LLMRouter } from "./core/llm-router";
+import { EDIT_ACTIONS, type EditAction } from "./core/prompt-manager";
+import { EditManager } from "./editor/edit-manager";
 import { KeyStore, type SecretStorageLike } from "./settings/key-store";
 import { AIAgentSettingTab } from "./settings/settings-tab";
 import { normalizeSettings, type PluginSettings } from "./settings/settings";
@@ -16,6 +18,7 @@ export default class AIAgentPlugin extends Plugin {
   router!: LLMRouter;
   sessions!: SessionStore;
   context!: ObsidianContext;
+  edits!: EditManager;
   private transports: Partial<Record<"node" | "fetch", HttpTransport>> = {};
 
   async onload(): Promise<void> {
@@ -27,12 +30,15 @@ export default class AIAgentPlugin extends Plugin {
     const pluginDir = this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${PLUGIN_ID}`;
     this.sessions = new SessionStore(this.app.vault.adapter, `${pluginDir}/data/sessions`);
 
+    this.edits = new EditManager(this);
+
     this.registerView(VIEW_TYPE_CHAT, (leaf) => new ChatView(leaf, this));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.context.track()));
     this.app.workspace.onLayoutReady(() => this.context.track());
 
     this.addRibbonIcon("bot", "打开 AI Chat", () => void this.activateChatView());
     this.registerChatCommands();
+    this.registerEditCommands();
     this.addSettingTab(new AIAgentSettingTab(this.app, this));
     logger.info(`loaded (${this.settings.providers.length} model config(s))`);
   }
@@ -171,5 +177,61 @@ export default class AIAgentPlugin extends Plugin {
 
   stopAll(): void {
     for (const v of this.chatViews()) v.stop();
+    this.edits.stopAll();
+  }
+
+  /* -------------------------------- editing ------------------------------ */
+
+  private registerEditCommands(): void {
+    this.addCommand({
+      id: "edit-selection",
+      name: "AI 编辑（选中文本或光标处）",
+      icon: "wand",
+      editorCallback: (editor, ctx) => {
+        if (ctx instanceof MarkdownView) this.edits.promptAndRun(editor, ctx);
+      },
+    });
+    for (const action of EDIT_ACTIONS) {
+      this.addCommand({
+        id: `edit-${action.id}`,
+        name: `AI ${action.label}${action.needsSelection ? "选中文本" : ""}`,
+        icon: action.icon,
+        editorCheckCallback: (checking, editor, ctx) => {
+          if (!(ctx instanceof MarkdownView)) return false;
+          if (action.needsSelection && !editor.getSelection().trim()) return false;
+          if (!checking) this.edits.run(action, editor, ctx);
+          return true;
+        },
+      });
+    }
+
+    this.registerEvent(
+      this.app.workspace.on("editor-menu", (menu, editor, info) => {
+        if (!(info instanceof MarkdownView)) return;
+        this.addEditorMenu(menu, editor, info);
+      }),
+    );
+  }
+
+  private addEditorMenu(menu: Menu, editor: Editor, view: MarkdownView): void {
+    const hasSelection = editor.getSelection().trim().length > 0;
+    const actions = EDIT_ACTIONS.filter((a) => hasSelection || !a.needsSelection);
+    const fill = (add: (cb: (item: MenuItem) => void) => void) => {
+      add((item) =>
+        item
+          .setTitle("自定义指令…")
+          .setIcon("wand")
+          .onClick(() => this.edits.promptAndRun(editor, view)),
+      );
+      for (const a of actions) add((item) => item.setTitle(a.label).setIcon(a.icon).onClick(() => this.edits.run(a as EditAction, editor, view)));
+    };
+
+    menu.addItem((item) => {
+      item.setTitle("AI 编辑").setIcon("bot").setSection("ai-agent");
+      // Submenus exist at runtime but are not in the public typings yet.
+      const sub = (item as unknown as { setSubmenu?: () => Menu }).setSubmenu?.();
+      if (sub) fill((cb) => sub.addItem(cb));
+      else item.onClick(() => this.edits.promptAndRun(editor, view));
+    });
   }
 }
