@@ -67,7 +67,8 @@
 .ai-agent-chat-actions { display: flex; gap: 2px; }
 
 .ai-agent-messages {
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
   overflow-y: auto;
   padding: var(--size-4-3);
   display: flex;
@@ -154,6 +155,50 @@
 .ai-agent-msg-actions { display: flex; align-items: center; gap: 2px; opacity: 0.6; }
 .ai-agent-msg:hover .ai-agent-msg-actions { opacity: 1; }
 .ai-agent-msg-usage { margin-left: auto; font-size: var(--font-ui-smaller); color: var(--text-faint); }
+
+/* divider between conversation and context: drag to resize */
+.ai-agent-resizer {
+  position: relative;
+  flex: none;
+  height: 9px;
+  margin: -4px 0;
+  z-index: 2;
+  cursor: row-resize;
+  touch-action: none;
+  outline: none;
+}
+.ai-agent-resizer::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 4px;
+  height: 1px;
+  background: var(--background-modifier-border);
+  transition: background-color 150ms ease, height 150ms ease, top 150ms ease;
+}
+.ai-agent-resizer::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  width: 32px;
+  height: 5px;
+  margin-left: -16px;
+  border-radius: 3px;
+  background: var(--interactive-accent);
+  opacity: 0;
+  transform: scaleX(0.4);
+  transition: opacity 150ms ease, transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.ai-agent-resizer:hover::before,
+.ai-agent-resizer:focus-visible::before,
+.ai-agent-resizer.is-dragging::before { top: 3.5px; height: 2px; background: var(--interactive-accent); }
+.ai-agent-resizer:hover::after,
+.ai-agent-resizer:focus-visible::after,
+.ai-agent-resizer.is-dragging::after { opacity: 1; transform: scaleX(1); }
+.ai-agent-chat.is-resizing,
+.ai-agent-chat.is-resizing * { cursor: row-resize !important; user-select: none !important; }
 
 /* bottom panel: context chips + composer box */
 .ai-agent-bottom {

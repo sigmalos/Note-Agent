@@ -31,6 +31,13 @@ interface RenderedMessage {
 
 const RENDER_INTERVAL_MS = 80;
 
+/** Bottom panel (context chips + composer) sizing, adjusted by dragging the divider. */
+const BOTTOM_HEIGHT_KEY = "ai-agent-chat-bottom-height";
+const BOTTOM_DEFAULT = 172;
+const BOTTOM_MIN = 124;
+/** Space always kept for the conversation above the divider. */
+const MESSAGES_MIN = 120;
+
 /** Sidebar chat (SRS §4.2 / §5.1.1). */
 export class ChatView extends ItemView {
   private session!: ChatSession;
@@ -47,6 +54,10 @@ export class ChatView extends ItemView {
   private messagesEl!: HTMLElement;
   private contextBarEl!: HTMLElement;
   private bottomEl!: HTMLElement;
+  private headerEl!: HTMLElement;
+  private resizerEl!: HTMLElement;
+  /** Height the user asked for; the applied height is clamped to the available space. */
+  private bottomHeight = BOTTOM_DEFAULT;
   private inputEl!: HTMLTextAreaElement;
   private modelPicker!: HTMLButtonElement;
   private sendBtn!: HTMLButtonElement;
@@ -134,7 +145,7 @@ export class ChatView extends ItemView {
     root.addClass("ai-agent-chat");
 
     // Header
-    const header = root.createDiv({ cls: "ai-agent-chat-header" });
+    const header = (this.headerEl = root.createDiv({ cls: "ai-agent-chat-header" }));
     this.titleEl = header.createDiv({ cls: "ai-agent-chat-title", attr: { "aria-label": "点击重命名会话" } });
     this.titleEl.addEventListener("click", () => this.renameSession());
     const actions = header.createDiv({ cls: "ai-agent-chat-actions" });
@@ -147,6 +158,12 @@ export class ChatView extends ItemView {
     // Messages
     this.messagesEl = root.createDiv({ cls: "ai-agent-messages" });
     this.messagesEl.addEventListener("click", (evt) => this.onMessagesClick(evt));
+
+    // Divider between conversation and context: drag to resize the bottom panel.
+    this.resizerEl = root.createDiv({
+      cls: "ai-agent-resizer",
+      attr: { role: "separator", "aria-orientation": "horizontal", tabindex: "0", "aria-label": "拖动调整输入区高度，双击恢复默认" },
+    });
 
     // Bottom panel: attached-context chips + composer box
     this.bottomEl = root.createDiv({ cls: "ai-agent-bottom" });
@@ -183,6 +200,84 @@ export class ChatView extends ItemView {
     this.sendBtn = footer.createEl("button", { cls: "mod-cta ai-agent-send" });
     this.sendBtn.addEventListener("click", () => void this.onSendClick());
     this.updateSendButton();
+    this.setupResizer();
+  }
+
+  /* ------------------------------- resizing ------------------------------ */
+
+  private setupResizer(): void {
+    const saved = Number(this.app.loadLocalStorage(BOTTOM_HEIGHT_KEY));
+    this.applyBottomHeight(Number.isFinite(saved) && saved > 0 ? saved : BOTTOM_DEFAULT);
+
+    const el = this.resizerEl;
+    let startY = 0;
+    let startH = 0;
+    let dragging = false;
+    const end = (e: PointerEvent) => {
+      if (!dragging) return;
+      dragging = false;
+      if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+      el.removeClass("is-dragging");
+      this.contentEl.removeClass("is-resizing");
+      this.saveBottomHeight();
+    };
+    el.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      dragging = true;
+      startY = e.clientY;
+      startH = this.bottomEl.getBoundingClientRect().height;
+      el.setPointerCapture(e.pointerId);
+      el.addClass("is-dragging");
+      this.contentEl.addClass("is-resizing");
+    });
+    el.addEventListener("pointermove", (e) => {
+      // Dragging up (smaller clientY) makes the bottom panel taller.
+      if (dragging) this.applyBottomHeight(startH + (startY - e.clientY), true);
+    });
+    el.addEventListener("pointerup", end);
+    el.addEventListener("pointercancel", end);
+    el.addEventListener("lostpointercapture", end);
+    el.addEventListener("dblclick", () => {
+      this.applyBottomHeight(BOTTOM_DEFAULT);
+      this.saveBottomHeight();
+    });
+    el.addEventListener("keydown", (e) => {
+      const step = e.shiftKey ? 48 : 16;
+      if (e.key === "ArrowUp") this.applyBottomHeight(this.currentBottomHeight() + step, true);
+      else if (e.key === "ArrowDown") this.applyBottomHeight(this.currentBottomHeight() - step, true);
+      else return;
+      e.preventDefault();
+      this.saveBottomHeight();
+    });
+
+    // Re-clamp when the sidebar itself is resized (window resize, split drag…).
+    const ro = new ResizeObserver(() => this.applyBottomHeight(this.bottomHeight));
+    ro.observe(this.contentEl);
+    this.register(() => ro.disconnect());
+  }
+
+  private currentBottomHeight(): number {
+    return Math.round(this.bottomEl.getBoundingClientRect().height) || this.bottomHeight;
+  }
+
+  private maxBottomHeight(): number {
+    const total = this.contentEl.clientHeight;
+    if (!total) return Number.POSITIVE_INFINITY; // not laid out yet (hidden sidebar)
+    return Math.max(BOTTOM_MIN, total - this.headerEl.offsetHeight - this.resizerEl.offsetHeight - MESSAGES_MIN);
+  }
+
+  /** @param fromUser true while the user is resizing: what they see becomes the remembered height. */
+  private applyBottomHeight(height: number, fromUser = false): void {
+    const clamped = Math.round(Math.min(Math.max(height, BOTTOM_MIN), this.maxBottomHeight()));
+    if (fromUser) this.bottomHeight = clamped;
+    else this.bottomHeight = Math.max(BOTTOM_MIN, Math.round(height));
+    this.bottomEl.style.height = `${clamped}px`;
+    this.resizerEl.setAttr("aria-valuenow", String(clamped));
+  }
+
+  private saveBottomHeight(): void {
+    this.app.saveLocalStorage(BOTTOM_HEIGHT_KEY, this.bottomHeight);
   }
 
   private iconButton(parent: HTMLElement, icon: string, label: string, onClick: (evt: MouseEvent) => void): HTMLElement {
