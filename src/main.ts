@@ -1,15 +1,21 @@
-import { Platform, Plugin } from "obsidian";
+import { Notice, Platform, Plugin, type WorkspaceLeaf } from "obsidian";
+import { SessionStore } from "./chat/session-manager";
+import { PLUGIN_ID, VIEW_TYPE_CHAT } from "./constants";
+import { ObsidianContext } from "./context/obsidian-context";
 import { createFetchTransport, createNodeTransport, type HttpTransport } from "./core/http";
 import { LLMRouter } from "./core/llm-router";
 import { KeyStore, type SecretStorageLike } from "./settings/key-store";
 import { AIAgentSettingTab } from "./settings/settings-tab";
 import { normalizeSettings, type PluginSettings } from "./settings/settings";
+import { ChatView } from "./ui/chat-view";
 import { logger } from "./utils/logger";
 
 export default class AIAgentPlugin extends Plugin {
   settings!: PluginSettings;
   keys!: KeyStore;
   router!: LLMRouter;
+  sessions!: SessionStore;
+  context!: ObsidianContext;
   private transports: Partial<Record<"node" | "fetch", HttpTransport>> = {};
 
   async onload(): Promise<void> {
@@ -17,7 +23,16 @@ export default class AIAgentPlugin extends Plugin {
     this.keys = new KeyStore(secrets);
     await this.loadSettings();
     this.router = new LLMRouter(() => this.settings, () => this.getTransport(), this.keys);
+    this.context = new ObsidianContext(this.app, () => this.settings.excludedFolders);
+    const pluginDir = this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${PLUGIN_ID}`;
+    this.sessions = new SessionStore(this.app.vault.adapter, `${pluginDir}/data/sessions`);
 
+    this.registerView(VIEW_TYPE_CHAT, (leaf) => new ChatView(leaf, this));
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.context.track()));
+    this.app.workspace.onLayoutReady(() => this.context.track());
+
+    this.addRibbonIcon("bot", "打开 AI Chat", () => void this.activateChatView());
+    this.registerChatCommands();
     this.addSettingTab(new AIAgentSettingTab(this.app, this));
     logger.info(`loaded (${this.settings.providers.length} model config(s))`);
   }
@@ -25,6 +40,8 @@ export default class AIAgentPlugin extends Plugin {
   onunload(): void {
     logger.info("unloaded");
   }
+
+  /* ------------------------------- settings ------------------------------ */
 
   async loadSettings(): Promise<void> {
     this.settings = normalizeSettings(await this.loadData());
@@ -36,6 +53,7 @@ export default class AIAgentPlugin extends Plugin {
   async saveSettings(): Promise<void> {
     logger.debugEnabled = this.settings.debugLogging;
     await this.saveData(this.settings);
+    for (const view of this.chatViews()) view.refreshModels();
   }
 
   async removeProvider(id: string): Promise<void> {
@@ -48,6 +66,12 @@ export default class AIAgentPlugin extends Plugin {
       if (s.taskModels[k] === id) s.taskModels[k] = "";
     }
     await this.saveSettings();
+  }
+
+  openSettings(): void {
+    const setting = (this.app as unknown as { setting?: { open(): void; openTabById(id: string): void } }).setting;
+    setting?.open();
+    setting?.openTabById(this.manifest.id);
   }
 
   /** Node transport on desktop (no CORS, streams); fetch on mobile or when forced. */
@@ -67,5 +91,85 @@ export default class AIAgentPlugin extends Plugin {
       }
     }
     return (this.transports.fetch ??= createFetchTransport());
+  }
+
+  /* --------------------------------- chat -------------------------------- */
+
+  chatViews(): ChatView[] {
+    return this.app.workspace
+      .getLeavesOfType(VIEW_TYPE_CHAT)
+      .map((l) => l.view)
+      .filter((v): v is ChatView => v instanceof ChatView);
+  }
+
+  async activateChatView(): Promise<ChatView | null> {
+    const { workspace } = this.app;
+    let leaf: WorkspaceLeaf | null = workspace.getLeavesOfType(VIEW_TYPE_CHAT)[0] ?? null;
+    if (!leaf) {
+      leaf = workspace.getRightLeaf(false);
+      if (!leaf) return null;
+      await leaf.setViewState({ type: VIEW_TYPE_CHAT, active: true });
+    }
+    await workspace.revealLeaf(leaf);
+    const view = leaf.view instanceof ChatView ? leaf.view : null;
+    view?.focusInput();
+    return view;
+  }
+
+  /** Insert text at the cursor of the last active note (explicit user action from chat). */
+  insertIntoNote(text: string): void {
+    const snap = this.context.snapshot();
+    if (!snap) {
+      new Notice("没有找到可插入的笔记，请先打开一篇笔记。");
+      return;
+    }
+    const pos = snap.editor.getCursor("to");
+    snap.editor.replaceRange(text, pos);
+    new Notice(`已插入到「${snap.file.basename}」，可使用 Ctrl/Cmd+Z 撤销。`);
+  }
+
+  private registerChatCommands(): void {
+    this.addCommand({ id: "open-chat", name: "打开 AI Chat", callback: () => void this.activateChatView() });
+    this.addCommand({
+      id: "new-chat",
+      name: "新建 AI 会话",
+      callback: async () => (await this.activateChatView())?.newSession(),
+    });
+    this.addCommand({
+      id: "summarize-note",
+      name: "AI 总结当前笔记",
+      checkCallback: (checking) => {
+        if (!this.context.snapshot()) return false;
+        if (!checking) {
+          void this.activateChatView().then((v) =>
+            v?.sendPrompt("请总结当前笔记：先用一句话概括主旨，再用要点列出核心观点。", { useCurrentFile: true, useSelection: false }),
+          );
+        }
+        return true;
+      },
+    });
+    this.addCommand({
+      id: "explain-selection",
+      name: "AI 解释选中内容",
+      checkCallback: (checking) => {
+        const snap = this.context.snapshot();
+        if (!snap?.selection.trim()) return false;
+        if (!checking) {
+          void this.activateChatView().then((v) =>
+            v?.sendPrompt("请通俗地解释选中的内容，必要时举例说明。", { useSelection: true, useCurrentFile: false }),
+          );
+        }
+        return true;
+      },
+    });
+    this.addCommand({
+      id: "stop-generation",
+      name: "停止 AI 生成",
+      callback: () => this.stopAll(),
+    });
+  }
+
+  stopAll(): void {
+    for (const v of this.chatViews()) v.stop();
   }
 }
