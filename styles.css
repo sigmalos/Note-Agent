@@ -435,3 +435,140 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 @media (max-width: 700px) {
   .ai-agent-diff-body.is-split { grid-template-columns: 1fr; }
 }
+
+/* ==========================================================================
+   Motion — short, purposeful feedback. Scoped to plugin UI; disabled under
+   prefers-reduced-motion. JS only toggles classes (src/ui/components/motion.ts).
+   ========================================================================== */
+.ai-agent-chat,
+.ai-agent-diff-modal,
+.ai-agent-edit-prompt,
+.ai-agent-session-modal,
+.ai-agent-provider-modal,
+.ai-agent-settings {
+  --ai-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ai-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes ai-agent-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes ai-agent-rise-user { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes ai-agent-leave { to { opacity: 0; transform: translateY(-10px); } }
+@keyframes ai-agent-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ai-agent-pop-in { from { opacity: 0; transform: scale(0.82); } to { opacity: 1; transform: none; } }
+@keyframes ai-agent-pop-out { to { opacity: 0; transform: scale(0.82); } }
+@keyframes ai-agent-bump { 40% { transform: scale(0.92); } 100% { transform: none; } }
+@keyframes ai-agent-pop { 0% { transform: scale(0.6); } 60% { transform: scale(1.18); } 100% { transform: none; } }
+@keyframes ai-agent-spin { to { transform: rotate(360deg); } }
+@keyframes ai-agent-quarter { to { transform: rotate(90deg); } }
+@keyframes ai-agent-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+@keyframes ai-agent-dot { 0%, 80%, 100% { transform: translateY(0); opacity: 0.35; } 40% { transform: translateY(-4px); opacity: 1; } }
+@keyframes ai-agent-shake { 20%, 60% { transform: translateX(-3px); } 40%, 80% { transform: translateX(3px); } }
+@keyframes ai-agent-glow {
+  0% { box-shadow: 0 0 0 0 hsla(var(--interactive-accent-hsl), 0.45); }
+  100% { box-shadow: 0 0 0 8px hsla(var(--interactive-accent-hsl), 0); }
+}
+
+/* ---- buttons: hover/press everywhere in plugin UI ---- */
+:is(.ai-agent-chat, .ai-agent-diff-modal, .ai-agent-edit-prompt, .ai-agent-session-modal, .ai-agent-provider-modal, .ai-agent-settings)
+  :is(button, .clickable-icon) {
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease, box-shadow 160ms ease,
+    opacity 140ms ease, transform 160ms var(--ai-ease);
+}
+:is(.ai-agent-chat, .ai-agent-diff-modal, .ai-agent-edit-prompt, .ai-agent-session-modal, .ai-agent-provider-modal, .ai-agent-settings)
+  :is(button, .clickable-icon):active:not(:disabled) {
+  transform: scale(0.92);
+  transition-duration: 60ms;
+}
+:is(.ai-agent-chat, .ai-agent-diff-modal, .ai-agent-edit-prompt, .ai-agent-settings) button.mod-cta:active:not(:disabled) { transform: scale(0.96); }
+.ai-agent-chat .clickable-icon svg { transition: transform 200ms var(--ai-ease); }
+.ai-agent-chat .clickable-icon.is-rotating svg { animation: ai-agent-quarter 320ms var(--ai-spring); }
+.ai-agent-chat .clickable-icon.is-spinning svg { animation: ai-agent-spin 560ms var(--ai-ease); }
+.ai-agent-chat .clickable-icon.is-done { color: var(--color-green); }
+.ai-agent-chat .clickable-icon.is-popping svg { animation: ai-agent-pop 360ms var(--ai-spring); }
+
+/* ---- send / stop ---- */
+.ai-agent-send { transition: background-color 200ms ease, color 200ms ease, transform 160ms var(--ai-ease), box-shadow 160ms ease; }
+.ai-agent-send:hover:not(:disabled) { box-shadow: 0 2px 8px hsla(var(--interactive-accent-hsl), 0.35); }
+.ai-agent-send.is-swapping .ai-agent-send-icon { display: inline-flex; animation: ai-agent-pop 320ms var(--ai-spring); }
+.ai-agent-send.is-busy .ai-agent-send-icon svg { fill: currentColor; }
+
+/* ---- conversation ---- */
+.ai-agent-messages.is-entering { animation: ai-agent-rise 260ms var(--ai-ease) both; }
+.ai-agent-messages.is-leaving { animation: ai-agent-leave 180ms ease-in both; pointer-events: none; }
+.ai-agent-msg.is-entering { animation: ai-agent-rise 260ms var(--ai-ease) both; }
+.ai-agent-msg.is-user.is-entering { transform-origin: right bottom; animation-name: ai-agent-rise-user; }
+.ai-agent-msg.is-settled .ai-agent-msg-actions { animation: ai-agent-fade-in 260ms ease both; }
+.ai-agent-msg.is-failed .ai-agent-msg-error { animation: ai-agent-shake 360ms ease both; }
+.ai-agent-chat-title.is-updating { animation: ai-agent-fade-in 280ms ease both; }
+.ai-agent-empty-state { animation: ai-agent-rise 360ms var(--ai-ease) both; }
+.ai-agent-empty-icon { animation: ai-agent-float 3.2s ease-in-out infinite; }
+.ai-agent-msg-context { transition: color 140ms ease; }
+
+.ai-agent-typing { display: inline-flex; align-items: center; gap: 8px; }
+.ai-agent-typing-dots { display: inline-flex; gap: 3px; }
+.ai-agent-typing-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-accent);
+  animation: ai-agent-dot 1.2s ease-in-out infinite;
+}
+.ai-agent-typing-dots span:nth-child(2) { animation-delay: 0.15s; }
+.ai-agent-typing-dots span:nth-child(3) { animation-delay: 0.3s; }
+
+/* reasoning: rotating chevron instead of the default marker */
+.ai-agent-reasoning summary { list-style: none; display: inline-flex; align-items: center; gap: 4px; }
+.ai-agent-reasoning summary::-webkit-details-marker { display: none; }
+.ai-agent-reasoning summary::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  transition: transform 200ms var(--ai-ease);
+}
+.ai-agent-reasoning[open] > summary::before { transform: rotate(90deg); }
+.ai-agent-reasoning summary:hover { color: var(--text-normal); }
+.ai-agent-reasoning-body.is-revealing { animation: ai-agent-rise 220ms var(--ai-ease) both; }
+
+/* ---- context chips ---- */
+.ai-agent-chat .ai-agent-chip {
+  transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease, transform 160ms var(--ai-ease);
+}
+.ai-agent-chat .ai-agent-chip:hover { border-color: var(--interactive-accent); color: var(--text-normal); }
+.ai-agent-chat .ai-agent-chip:active { transform: scale(0.95); }
+.ai-agent-chip.is-new { animation: ai-agent-pop-in 240ms var(--ai-spring) both; }
+.ai-agent-chip.is-bump { animation: ai-agent-bump 240ms var(--ai-ease); }
+.ai-agent-chip.is-removing { animation: ai-agent-pop-out 160ms ease-in both; pointer-events: none; }
+.ai-agent-chip-remove { transition: color 140ms ease, transform 160ms var(--ai-ease); }
+.ai-agent-chip-remove:hover { transform: rotate(90deg); }
+
+/* ---- composer ---- */
+.ai-agent-composer { transition: border-color 160ms ease, box-shadow 200ms ease; }
+.ai-agent-composer.is-flash { animation: ai-agent-glow 600ms ease-out; }
+.ai-agent-model-picker-chevron { display: inline-flex; transition: transform 200ms var(--ai-ease); }
+.ai-agent-model-picker.is-open .ai-agent-model-picker-chevron { transform: rotate(180deg); }
+
+/* ---- modals ---- */
+.ai-agent-edit-preset { transition: transform 160ms var(--ai-ease), background-color 140ms ease, box-shadow 160ms ease; }
+.ai-agent-edit-preset:hover { transform: translateY(-1px); box-shadow: var(--shadow-s); }
+.ai-agent-edit-preset:active { transform: scale(0.95); }
+.ai-agent-diff-body.is-ready { animation: ai-agent-fade-in 240ms ease both; }
+.ai-agent-diff-modal .ai-agent-msg-error.is-failed { animation: ai-agent-shake 360ms ease both; }
+.ai-agent-session-row {
+  animation: ai-agent-rise 220ms var(--ai-ease) both;
+  animation-delay: calc(var(--i, 0) * 22ms);
+  transition: background-color 140ms ease;
+}
+.ai-agent-session-row.is-removing { animation: ai-agent-leave 180ms ease-in both; animation-delay: 0ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  :is(.ai-agent-chat, .ai-agent-diff-modal, .ai-agent-edit-prompt, .ai-agent-session-modal, .ai-agent-provider-modal, .ai-agent-settings),
+  :is(.ai-agent-chat, .ai-agent-diff-modal, .ai-agent-edit-prompt, .ai-agent-session-modal, .ai-agent-provider-modal, .ai-agent-settings) * {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
+    transition-duration: 1ms !important;
+  }
+}

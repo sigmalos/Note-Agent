@@ -9,6 +9,7 @@ import { estimateTokens } from "../core/token-manager";
 import type AIAgentPlugin from "../main";
 import { confirmDialog } from "./components/confirm-modal";
 import { NoteSuggestModal } from "./components/note-suggest-modal";
+import { animateOut, flash, prefersReducedMotion } from "./components/motion";
 import { promptText } from "./components/text-input-modal";
 import { ContextViewerModal } from "./context-viewer-modal";
 import { SessionListModal } from "./session-list-modal";
@@ -64,6 +65,12 @@ export class ChatView extends ItemView {
   private rendered = new Map<string, RenderedMessage>();
   /** Reasoning blocks the user opened/closed manually: keep their choice across re-renders. */
   private reasoningToggled = new Map<string, boolean>();
+  /** Last seen status per message, to animate transitions (streaming → done / error). */
+  private lastStatus = new Map<string, string | undefined>();
+  /** Chips rendered last time, so only newly added chips animate in. */
+  private chipKeys = new Set<string>();
+  private sendBusy: boolean | null = null;
+  private composerEl!: HTMLElement;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -121,8 +128,14 @@ export class ChatView extends ItemView {
   async newSession(): Promise<void> {
     if (this.controller?.busy) this.controller.stop();
     if (this.session.messages.length) await this.plugin.sessions.save(this.session);
-    this.setSession(createSession());
+    await this.swapSession(createSession());
     this.focusInput();
+  }
+
+  /** Fade the current conversation out, then show `next` (which fades in). */
+  private async swapSession(next: ChatSession): Promise<void> {
+    if (this.session?.messages.length) await animateOut(this.messagesEl, "is-leaving", 200);
+    this.setSession(next);
   }
 
   /** Used by commands such as "总结当前笔记". */
@@ -149,7 +162,10 @@ export class ChatView extends ItemView {
     this.titleEl = header.createDiv({ cls: "ai-agent-chat-title", attr: { "aria-label": "点击重命名会话" } });
     this.titleEl.addEventListener("click", () => this.renameSession());
     const actions = header.createDiv({ cls: "ai-agent-chat-actions" });
-    this.iconButton(actions, "plus", "新建会话", () => this.newSession());
+    this.iconButton(actions, "plus", "新建会话", (e) => {
+      flash(e.currentTarget as HTMLElement, "is-rotating");
+      void this.newSession();
+    });
     this.iconButton(actions, "history", "历史会话", () => this.openHistory());
     this.iconButton(actions, "file-down", "保存为笔记", () => this.exportToNote());
     this.iconButton(actions, "eraser", "清空对话", () => this.clearSession());
@@ -168,7 +184,7 @@ export class ChatView extends ItemView {
     // Bottom panel: attached-context chips + composer box
     this.bottomEl = root.createDiv({ cls: "ai-agent-bottom" });
     this.contextBarEl = this.bottomEl.createDiv({ cls: "ai-agent-context-bar" });
-    const composer = this.bottomEl.createDiv({ cls: "ai-agent-composer" });
+    const composer = (this.composerEl = this.bottomEl.createDiv({ cls: "ai-agent-composer" }));
     // Clicking the box's padding/toolbar background focuses the input, like a single text field.
     composer.addEventListener("mousedown", (e) => {
       if (e.target === composer || (e.target as HTMLElement).hasClass?.("ai-agent-composer-footer")) {
@@ -281,10 +297,26 @@ export class ChatView extends ItemView {
   }
 
   private iconButton(parent: HTMLElement, icon: string, label: string, onClick: (evt: MouseEvent) => void): HTMLElement {
-    const b = parent.createEl("button", { cls: "clickable-icon", attr: { "aria-label": label } });
+    const b = parent.createEl("button", { cls: "clickable-icon", attr: { "aria-label": label, "data-icon": icon } });
     setIcon(b, icon);
     b.addEventListener("click", onClick);
     return b;
+  }
+
+  /** Brief success feedback on an icon button: swap to a check mark, then restore. */
+  private confirmButton(btn: HTMLElement, label: string): void {
+    const icon = btn.getAttr("data-icon") ?? "check";
+    const prevLabel = btn.getAttr("aria-label") ?? "";
+    setIcon(btn, "check");
+    btn.addClass("is-done");
+    btn.setAttr("aria-label", label);
+    flash(btn, "is-popping");
+    window.setTimeout(() => {
+      if (!btn.isConnected) return;
+      setIcon(btn, icon);
+      btn.removeClass("is-done");
+      btn.setAttr("aria-label", prevLabel);
+    }, 1400);
   }
 
   /** Update the model picker label (called on open, session switch and settings change). */
@@ -361,18 +393,25 @@ export class ChatView extends ItemView {
     });
     for (const r of this.rendered.values()) r.component.unload();
     this.rendered.clear();
+    this.lastStatus.clear();
+    this.messagesEl.removeClass("is-leaving");
     this.messagesEl.empty();
     this.renderEmptyState();
-    for (const m of session.messages) this.renderMessage(m, true);
+    // Existing messages appear together with the list (no per-message animation).
+    for (const m of session.messages) this.renderMessage(m, true, false);
+    flash(this.messagesEl, "is-entering");
     this.updateTitle();
     this.refreshModels();
     this.refreshContextBar(true);
     this.updateSendButton();
-    this.scrollToBottom(true);
+    this.scrollToBottom();
   }
 
   private updateTitle(): void {
-    this.titleEl.setText(this.session.title || "新对话");
+    const title = this.session.title || "新对话";
+    if (this.titleEl.getText() === title) return;
+    this.titleEl.setText(title);
+    flash(this.titleEl, "is-updating");
   }
 
   private async renameSession(): Promise<void> {
@@ -389,7 +428,7 @@ export class ChatView extends ItemView {
         if (id === this.session.id) return;
         if (this.session.messages.length) await this.plugin.sessions.save(this.session);
         const s = await this.plugin.sessions.load(id);
-        if (s) this.setSession(s);
+        if (s) await this.swapSession(s);
         else new Notice("会话文件不存在或已损坏。");
       },
       rename: async (id, title) => {
@@ -403,7 +442,7 @@ export class ChatView extends ItemView {
         if (s) await this.plugin.sessions.save({ ...s, title });
       },
       deleted: (id) => {
-        if (id === this.session.id) this.setSession(createSession());
+        if (id === this.session.id) void this.swapSession(createSession());
       },
     }).open();
   }
@@ -413,6 +452,7 @@ export class ChatView extends ItemView {
     const ok = await confirmDialog(this.app, { title: "清空对话", message: "确定清空当前会话中的所有消息吗？", confirmText: "清空", danger: true });
     if (!ok) return;
     this.controller.stop();
+    await animateOut(this.messagesEl, "is-leaving", 200);
     this.session.messages = [];
     this.session.title = "新对话";
     this.session.updatedAt = Date.now();
@@ -491,6 +531,12 @@ export class ChatView extends ItemView {
 
     const bar = this.contextBarEl;
     bar.empty();
+    const seen = new Set<string>();
+    const keyed = (key: string, chip: HTMLElement) => {
+      seen.add(key);
+      if (!this.chipKeys.has(key)) chip.addClass("is-new");
+      return chip;
+    };
     const budget = this.plugin.settings.maxContextTokens;
     const tokensOf = (kind: string) => items.filter((it) => it.kind === kind).reduce((n, it) => n + estimateTokens(it.content), 0);
     const totalTokens = items.reduce((n, it) => n + estimateTokens(it.content), 0);
@@ -498,7 +544,7 @@ export class ChatView extends ItemView {
 
     if (currentLabel) {
       const active = this.useCurrentFile && !currentExcluded;
-      const chip = this.chip(bar, "file-text", currentExcluded ? `${currentLabel}（已排除）` : currentLabel, active);
+      const chip = keyed(`current:${currentLabel}`, this.chip(bar, "file-text", currentExcluded ? `${currentLabel}（已排除）` : currentLabel, active));
       if (currentExcluded) {
         chip.setAttr("aria-label", "该笔记位于排除文件夹中，不会发送");
       } else {
@@ -507,31 +553,40 @@ export class ChatView extends ItemView {
         if (active && over) this.markOverBudget(chip, budget);
         chip.addEventListener("click", () => {
           this.useCurrentFile = !this.useCurrentFile;
-          this.refreshContextBar(true);
+          this.toggleChip(chip, this.useCurrentFile);
         });
       }
     }
     if (selectionChars > 0 && !currentExcluded) {
-      const chip = this.chip(bar, "text-cursor-input", `选中文本 · ${selectionChars} 字`, this.useSelection);
+      const chip = keyed("selection", this.chip(bar, "text-cursor-input", `选中文本 · ${selectionChars} 字`, this.useSelection));
       chip.setAttr("aria-label", `${this.useSelection ? `选中文本 · 约 ${tokensOf("selection").toLocaleString()} tokens` : "选中文本（未附带）"}\n点击切换是否发送`);
       chip.addEventListener("click", () => {
         this.useSelection = !this.useSelection;
-        this.refreshContextBar(true);
+        this.toggleChip(chip, this.useSelection);
       });
     }
     for (const path of this.attachedPaths) {
       const name = path.split("/").pop()?.replace(/\.md$/, "") ?? path;
-      const chip = this.chip(bar, "paperclip", name, true);
+      const chip = keyed(`file:${path}`, this.chip(bar, "paperclip", name, true));
       chip.setAttr("aria-label", `${path}\n点击 × 移除`);
       const x = chip.createSpan({ cls: "ai-agent-chip-remove", attr: { "aria-label": "移除" } });
       setIcon(x, "x");
-      x.addEventListener("click", (e) => {
+      x.addEventListener("click", async (e) => {
         e.stopPropagation();
+        await animateOut(chip, "is-removing", 180);
         this.attachedPaths = this.attachedPaths.filter((p) => p !== path);
         this.refreshContextBar(true);
       });
     }
+    this.chipKeys = seen;
     bar.toggle(bar.childElementCount > 0);
+  }
+
+  /** Flip a chip in place so its colour transition is visible, then re-render the row. */
+  private toggleChip(chip: HTMLElement, active: boolean): void {
+    chip.toggleClass("is-active", active);
+    flash(chip, "is-bump");
+    window.setTimeout(() => this.refreshContextBar(true), prefersReducedMotion() ? 0 : 200);
   }
 
   private markOverBudget(chip: HTMLElement, budget: number): void {
@@ -572,12 +627,17 @@ export class ChatView extends ItemView {
 
   private updateSendButton(): void {
     if (!this.sendBtn) return;
-    this.sendBtn.empty();
     const busy = this.controller?.busy ?? false;
-    setIcon(this.sendBtn.createSpan(), busy ? "square" : "arrow-up");
+    // Called on every streamed chunk: only touch the DOM when the state flips.
+    if (busy === this.sendBusy) return;
+    const first = this.sendBusy === null;
+    this.sendBusy = busy;
+    this.sendBtn.empty();
+    setIcon(this.sendBtn.createSpan({ cls: "ai-agent-send-icon" }), busy ? "square" : "arrow-up");
     this.sendBtn.createSpan({ text: busy ? "停止" : "发送" });
     this.sendBtn.toggleClass("is-busy", busy);
     this.sendBtn.setAttr("aria-label", busy ? "停止生成" : "发送（Enter）");
+    if (!first) flash(this.sendBtn, "is-swapping");
   }
 
   private openQuickPrompts(evt: MouseEvent): void {
@@ -588,6 +648,7 @@ export class ChatView extends ItemView {
           if (qp.needs === "current-file") this.useCurrentFile = true;
           if (qp.needs === "selection") this.useSelection = true;
           this.inputEl.value = qp.template;
+          flash(this.composerEl, "is-flash");
           this.refreshContextBar(true);
           this.inputEl.focus();
           this.inputEl.setSelectionRange(qp.template.length, qp.template.length);
@@ -604,6 +665,11 @@ export class ChatView extends ItemView {
     this.updateTitle();
     this.updateSendButton();
     this.renderMessage(msg, msg.status !== "streaming");
+    const prev = this.lastStatus.get(msg.id);
+    this.lastStatus.set(msg.id, msg.status);
+    if (prev === "streaming" && msg.status !== "streaming") {
+      flash(this.rendered.get(msg.id)?.el, msg.status === "error" ? "is-failed" : "is-settled");
+    }
   }
 
   private renderEmptyState(): void {
@@ -618,7 +684,7 @@ export class ChatView extends ItemView {
     });
   }
 
-  private renderMessage(msg: ChatMessage, immediate: boolean): void {
+  private renderMessage(msg: ChatMessage, immediate: boolean, animate = true): void {
     this.messagesEl.querySelector(".ai-agent-empty-state")?.remove();
     let r = this.rendered.get(msg.id);
     if (!r) {
@@ -626,6 +692,11 @@ export class ChatView extends ItemView {
       r = { el, component: new Component(), pending: null };
       r.component.load();
       this.rendered.set(msg.id, r);
+      this.lastStatus.set(msg.id, msg.status);
+      if (animate) {
+        flash(el, "is-entering");
+        if (msg.role === "user") window.requestAnimationFrame(() => this.scrollToBottom(true));
+      }
     }
     if (immediate) {
       if (r.pending !== null) window.clearTimeout(r.pending);
@@ -672,15 +743,23 @@ export class ChatView extends ItemView {
         // Auto-expand only while the model is still thinking; afterwards respect the user's choice.
         details.open = this.reasoningToggled.get(msg.id) ?? (msg.status === "streaming" && !msg.content);
         const summary = details.createEl("summary", { text: msg.status === "streaming" && !msg.content ? "思考中…" : "思考过程" });
-        summary.addEventListener("click", () => this.reasoningToggled.set(msg.id, !details.open));
-        details.createDiv({ cls: "ai-agent-reasoning-body", text: msg.reasoning });
+        const rBody = details.createDiv({ cls: "ai-agent-reasoning-body", text: msg.reasoning });
+        summary.addEventListener("click", () => {
+          this.reasoningToggled.set(msg.id, !details.open);
+          if (!details.open) window.requestAnimationFrame(() => flash(rBody, "is-revealing"));
+        });
       }
       const body = el.createDiv({ cls: "ai-agent-msg-body markdown-rendered" });
       if (msg.content) {
         const sourcePath = this.plugin.context.snapshot()?.file.path ?? "";
         void MarkdownRenderer.render(this.app, msg.content, body, sourcePath, r.component);
       } else if (msg.status === "streaming") {
-        body.createDiv({ cls: "ai-agent-typing", text: msg.reasoning ? "" : "正在等待模型响应…" });
+        if (!msg.reasoning) {
+          const typing = body.createDiv({ cls: "ai-agent-typing", attr: { "aria-label": "正在等待模型响应" } });
+          const dots = typing.createSpan({ cls: "ai-agent-typing-dots" });
+          for (let i = 0; i < 3; i++) dots.createSpan();
+          typing.createSpan({ text: "正在等待模型响应" });
+        }
       }
       if (msg.status === "stopped") el.createDiv({ cls: "ai-agent-msg-note", text: "已停止生成" });
       if (msg.error) {
@@ -696,13 +775,21 @@ export class ChatView extends ItemView {
     const actions = el.createDiv({ cls: "ai-agent-msg-actions" });
     const isLast = this.session.messages[this.session.messages.length - 1]?.id === msg.id;
     if (msg.content) {
-      this.iconButton(actions, "copy", "复制回答", async () => {
+      this.iconButton(actions, "copy", "复制回答", async (e) => {
+        const btn = e.currentTarget as HTMLElement;
         await navigator.clipboard.writeText(msg.content);
-        new Notice("已复制到剪贴板");
+        this.confirmButton(btn, "已复制");
       });
-      this.iconButton(actions, "file-input", "插入到笔记光标处", () => this.plugin.insertIntoNote(msg.content));
+      this.iconButton(actions, "file-input", "插入到笔记光标处", (e) => {
+        if (this.plugin.insertIntoNote(msg.content)) this.confirmButton(e.currentTarget as HTMLElement, "已插入");
+      });
     }
-    if (isLast) this.iconButton(actions, "refresh-cw", "重新生成", () => void this.controller.regenerate());
+    if (isLast) {
+      this.iconButton(actions, "refresh-cw", "重新生成", (e) => {
+        flash(e.currentTarget as HTMLElement, "is-spinning");
+        void this.controller.regenerate();
+      });
+    }
     if (msg.usage?.totalTokens) actions.createSpan({ cls: "ai-agent-msg-usage", text: `${msg.usage.totalTokens} tokens` });
   }
 
@@ -722,7 +809,9 @@ export class ChatView extends ItemView {
     return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   }
 
-  private scrollToBottom(_force = false): void {
-    this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+  private scrollToBottom(smooth = false): void {
+    const el = this.messagesEl;
+    if (smooth && !prefersReducedMotion()) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    else el.scrollTop = el.scrollHeight;
   }
 }

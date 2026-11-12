@@ -2,6 +2,7 @@ import { App, Modal, Notice, setIcon } from "obsidian";
 import { diffStats, diffText, type DiffPart } from "../editor/diff";
 import type { EditSession, EditTask } from "../editor/edit-session";
 import type { LocateResult } from "../editor/edit-target";
+import { flash } from "./components/motion";
 
 const MODE_LABEL = {
   replace: "替换原文",
@@ -20,6 +21,7 @@ export class DiffPreviewModal extends Modal {
   private accepted = false;
   private renderTimer: number | null = null;
   private reasoningToggled = false;
+  private lastStatus: EditTask["status"] | null = null;
 
   private statusEl!: HTMLElement;
   private reasoningEl!: HTMLDetailsElement;
@@ -167,6 +169,12 @@ export class DiffPreviewModal extends Modal {
     this.layoutBtn.toggle(t.mode === "replace");
 
     this.renderBody();
+    // Result just finished streaming: let the diff fade in rather than snap.
+    if (this.lastStatus === "generating" && t.status !== "generating") {
+      flash(this.bodyEl, "is-ready");
+      if (t.status === "error") flash(this.errorEl, "is-failed");
+    }
+    this.lastStatus = t.status;
   }
 
   private parts(): DiffPart[] {

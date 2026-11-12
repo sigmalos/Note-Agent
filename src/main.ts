@@ -123,15 +123,16 @@ export default class AIAgentPlugin extends Plugin {
   }
 
   /** Insert text at the cursor of the last active note (explicit user action from chat). */
-  insertIntoNote(text: string): void {
+  insertIntoNote(text: string): boolean {
     const snap = this.context.snapshot();
     if (!snap) {
       new Notice("没有找到可插入的笔记，请先打开一篇笔记。");
-      return;
+      return false;
     }
     const pos = snap.editor.getCursor("to");
     snap.editor.replaceRange(text, pos);
     new Notice(`已插入到「${snap.file.basename}」，可使用 Ctrl/Cmd+Z 撤销。`);
+    return true;
   }
 
   private registerChatCommands(): void {

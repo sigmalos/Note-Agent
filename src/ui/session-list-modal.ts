@@ -2,6 +2,7 @@ import { App, Modal, setIcon } from "obsidian";
 import type { SessionStore } from "../chat/session-manager";
 import type { SessionSummary } from "../chat/types";
 import { confirmDialog } from "./components/confirm-modal";
+import { animateOut } from "./components/motion";
 import { promptText } from "./components/text-input-modal";
 
 /** History browser: open, rename, delete sessions (SRS §4.2.4). */
@@ -40,8 +41,9 @@ export class SessionListModal extends Modal {
       return;
     }
     const list = el.createDiv({ cls: "ai-agent-session-list" });
-    for (const s of this.sessions) {
+    this.sessions.forEach((s, i) => {
       const row = list.createDiv({ cls: "ai-agent-session-row" });
+      row.style.setProperty("--i", String(Math.min(i, 12)));
       if (s.id === this.currentId) row.addClass("is-current");
       const main = row.createDiv({ cls: "ai-agent-session-main" });
       main.createDiv({ cls: "ai-agent-session-title", text: s.title });
@@ -73,10 +75,11 @@ export class SessionListModal extends Modal {
       btn("trash", "删除", async () => {
         const ok = await confirmDialog(this.app, { title: "删除会话", message: `确定删除“${s.title}”吗？此操作不可撤销。`, confirmText: "删除", danger: true });
         if (!ok) return;
+        await animateOut(row, "is-removing", 200);
         await this.store.delete(s.id);
         this.handlers.deleted(s.id);
         await this.refresh();
       });
-    }
+    });
   }
 }

@@ -4,6 +4,7 @@
 # Coordinates are CSS pixels relative to the window viewport.
 x="$1"; y="$2"; n="${3:-1}"
 dir="$(cd "$(dirname "$0")" && pwd)"
+sleep 0.4  # give the previous CLI call time to settle; back-to-back calls drop input
 # Input events are dropped until the CDP session has handled a Runtime call: warm it up first.
 "$dir/obs.sh" dev:cdp method=Runtime.evaluate params='{"expression":"0"}' >/dev/null
 "$dir/obs.sh" dev:cdp method=Input.dispatchMouseEvent params="{\"type\":\"mouseMoved\",\"x\":$x,\"y\":$y}" >/dev/null
