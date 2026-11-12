@@ -61,7 +61,9 @@ MODEL_IDS=GLM-4.5-Flash,Qwen3.6-Flash,Kimi-K2.7 npm run seed
 ### AI Chat
 - 左侧功能区的 🤖 图标，或命令“打开 AI Chat”。
 - 输入框上方的**附件标签**列出将要发送的内容：当前笔记、选中文本（点击可开关）、通过输入框左下角 **+** 附加的其他笔记（× 移除）。悬停标签可查看估算的 Token 数。
-- 拖动对话区与输入区之间的分界线可以调整输入区高度，双击分界线恢复默认。
+- 拖动对话区与输入区之间的分界线可以调整输入区高度，双击分界线恢复默认（聚焦分界线后也可用 ↑/↓ 调整）。
+- 输入框左下角的模型选择器可为当前会话切换模型，新建会话会沿用上次选择的模型。
+- 快捷键：Enter 发送，Shift+Enter 换行，输入框为空时 ↑ 找回上一条提问，生成中按 Esc 停止。
 - 用户消息下方的 📎 可查看该轮**实际发送给模型的上下文**。
 - ✨ 打开快捷提示词：总结当前笔记、提取知识点、生成大纲、解释选中内容等。
 
@@ -99,6 +101,17 @@ npm test            # 单元测试（vitest）
 npm run test:live   # 真实接口集成测试，读取 .env；可用 LIVE_MODELS=a,b,c 指定多个模型
 npm run deploy      # 构建并热重载到测试仓库（需在 Obsidian 中启用 CLI）
 ```
+
+UI 测试辅助脚本通过 Obsidian CLI 的 DevTools 协议发送真实的鼠标和键盘事件：
+
+```bash
+scripts/ui-click.sh <x> <y> [clickCount]   # 点击（坐标为窗口内 CSS 像素）
+scripts/ui-drag.sh <x1> <y1> <x2> <y2>     # 拖拽
+scripts/ui-keys.sh text "文字"              # 输入文字
+scripts/ui-keys.sh key Enter [modifiers]    # 按键，modifiers：1 Alt / 2 Ctrl / 4 Meta / 8 Shift
+```
+
+> macOS 默认使用系统原生菜单，CDP 无法点击原生菜单项；测试菜单交互时可在测试仓库中执行 `app.vault.setConfig('nativeMenus', false)`。
 
 ### 目录结构
 

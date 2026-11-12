@@ -128,7 +128,8 @@ export class ChatView extends ItemView {
   async newSession(): Promise<void> {
     if (this.controller?.busy) this.controller.stop();
     if (this.session.messages.length) await this.plugin.sessions.save(this.session);
-    await this.swapSession(createSession());
+    // Keep the model the user picked for the next conversation.
+    await this.swapSession(createSession(this.session?.providerId ?? ""));
     this.focusInput();
   }
 
@@ -194,12 +195,26 @@ export class ChatView extends ItemView {
     });
     this.inputEl = composer.createEl("textarea", {
       cls: "ai-agent-input",
-      attr: { placeholder: "向 AI 提问，或让它处理当前笔记…（Enter 发送，Shift+Enter 换行）", rows: "2" },
+      attr: { placeholder: "向 AI 提问，或让它处理当前笔记…（Enter 发送，Shift+Enter 换行，↑ 上一条）", rows: "2" },
     });
     this.inputEl.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      if (e.isComposing) return;
+      if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         void this.onSendClick();
+      } else if (e.key === "Escape" && this.controller.busy) {
+        // Esc stops generation instead of leaving the input.
+        e.preventDefault();
+        e.stopPropagation();
+        this.controller.stop();
+      } else if (e.key === "ArrowUp" && !this.inputEl.value) {
+        // Recall the last question, like a shell history.
+        const last = [...this.session.messages].reverse().find((m) => m.role === "user");
+        if (!last) return;
+        e.preventDefault();
+        this.inputEl.value = last.content;
+        this.inputEl.setSelectionRange(last.content.length, last.content.length);
+        flash(this.composerEl, "is-flash");
       }
     });
     this.inputEl.addEventListener("focus", () => this.refreshContextBar());
