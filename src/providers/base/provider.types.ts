@@ -14,7 +14,12 @@ export interface ProviderConfig {
   protocol: ApiProtocol;
   /** Base URL, e.g. https://api.deepseek.com or https://open.bigmodel.cn/api/paas/v4 */
   endpoint: string;
+  /**
+   * Plaintext key. Only used when Obsidian's SecretStorage is unavailable (< 1.11.4);
+   * otherwise the key lives in SecretStorage under `apiKeySecretId` and this stays empty.
+   */
   apiKey?: string;
+  apiKeySecretId?: string;
   model: string;
   temperature?: number;
   maxTokens?: number;

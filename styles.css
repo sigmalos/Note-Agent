@@ -1,0 +1,41 @@
+/* ==========================================================================
+   Obsidian AI Agent — styles. Uses Obsidian CSS variables so themes apply.
+   ========================================================================== */
+
+/* ---------- shared ---------- */
+.ai-agent-status {
+  margin-top: 4px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  user-select: text;
+}
+.ai-agent-status.is-ok { color: var(--color-green); }
+.ai-agent-status.is-error { color: var(--text-error); }
+
+.ai-agent-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: var(--radius-s);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.6;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  vertical-align: middle;
+}
+
+.ai-agent-empty {
+  padding: var(--size-4-3);
+  color: var(--text-muted);
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  margin-bottom: var(--size-4-2);
+}
+
+/* ---------- settings ---------- */
+.ai-agent-settings .ai-agent-provider-row .setting-item-control { flex-wrap: wrap; gap: var(--size-2-2); }
+.ai-agent-provider-modal .setting-item-control input[type="text"],
+.ai-agent-provider-modal .setting-item-control input[type="password"] { width: 100%; min-width: 220px; }
+.ai-agent-provider-modal h4 { margin: var(--size-4-4) 0 var(--size-2-2); }
+.ai-agent-confirm-message { white-space: pre-wrap; }
