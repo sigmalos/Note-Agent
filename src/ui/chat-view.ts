@@ -320,10 +320,21 @@ export class ChatView extends ItemView {
 
   private refreshContextBar(force = false): void {
     if (!this.contextBarEl) return;
-    const { items, currentLabel, currentExcluded, selectionChars } = this.contextItems();
-    const key = JSON.stringify([currentLabel, currentExcluded, selectionChars, this.useCurrentFile, this.useSelection, this.attachedPaths]);
+    // Cheap change detection first (runs every second): avoid reading the whole note.
+    const snap = this.plugin.context.snapshot();
+    const key = JSON.stringify([
+      snap?.file.path,
+      snap?.editor.lineCount(),
+      snap?.editor.getLine(snap.editor.lastLine()).length,
+      snap?.selection.length,
+      this.useCurrentFile,
+      this.useSelection,
+      this.attachedPaths,
+      this.plugin.settings.excludedFolders,
+    ]);
     if (!force && key === this.lastContextKey) return;
     this.lastContextKey = key;
+    const { items, currentLabel, currentExcluded, selectionChars } = this.contextItems();
 
     const bar = this.contextBarEl;
     bar.empty();
