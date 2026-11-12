@@ -1,0 +1,33 @@
+{
+  "name": "obsidian-ai-agent",
+  "version": "0.1.0",
+  "description": "Obsidian AI Agent: bring-your-own LLM chat, context-aware AI editing with diff preview.",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc --noEmit && node esbuild.config.mjs production",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:live": "vitest run --config vitest.live.config.ts",
+    "deploy": "npm run build && node scripts/deploy.mjs",
+    "seed": "npm run build && node scripts/deploy.mjs --seed"
+  },
+  "keywords": [
+    "obsidian",
+    "plugin",
+    "ai",
+    "llm",
+    "agent"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "esbuild": "^0.25.12",
+    "obsidian": "^1.14.4",
+    "tslib": "^2.9.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  }
+}

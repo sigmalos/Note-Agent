@@ -1,0 +1,9 @@
+{
+  "id": "obsidian-ai-agent",
+  "name": "AI Agent",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Bring-your-own LLM chat and context-aware AI editing with diff preview for Obsidian.",
+  "author": "kylrcr",
+  "isDesktopOnly": false
+}
