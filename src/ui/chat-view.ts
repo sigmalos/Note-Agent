@@ -46,6 +46,7 @@ export class ChatView extends ItemView {
   private titleEl!: HTMLElement;
   private messagesEl!: HTMLElement;
   private contextBarEl!: HTMLElement;
+  private bottomEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
   private modelPicker!: HTMLButtonElement;
   private sendBtn!: HTMLButtonElement;
@@ -147,14 +148,20 @@ export class ChatView extends ItemView {
     this.messagesEl = root.createDiv({ cls: "ai-agent-messages" });
     this.messagesEl.addEventListener("click", (evt) => this.onMessagesClick(evt));
 
-    // Context bar
-    this.contextBarEl = root.createDiv({ cls: "ai-agent-context-bar" });
-
-    // Composer
-    const composer = root.createDiv({ cls: "ai-agent-composer" });
+    // Bottom panel: attached-context chips + composer box
+    this.bottomEl = root.createDiv({ cls: "ai-agent-bottom" });
+    this.contextBarEl = this.bottomEl.createDiv({ cls: "ai-agent-context-bar" });
+    const composer = this.bottomEl.createDiv({ cls: "ai-agent-composer" });
+    // Clicking the box's padding/toolbar background focuses the input, like a single text field.
+    composer.addEventListener("mousedown", (e) => {
+      if (e.target === composer || (e.target as HTMLElement).hasClass?.("ai-agent-composer-footer")) {
+        e.preventDefault();
+        this.inputEl.focus();
+      }
+    });
     this.inputEl = composer.createEl("textarea", {
       cls: "ai-agent-input",
-      attr: { placeholder: "向 AI 提问，或让它处理当前笔记…（Enter 发送，Shift+Enter 换行）", rows: "3" },
+      attr: { placeholder: "向 AI 提问，或让它处理当前笔记…（Enter 发送，Shift+Enter 换行）", rows: "2" },
     });
     this.inputEl.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
@@ -165,12 +172,13 @@ export class ChatView extends ItemView {
     this.inputEl.addEventListener("focus", () => this.refreshContextBar());
 
     const footer = composer.createDiv({ cls: "ai-agent-composer-footer" });
+    this.iconButton(footer, "plus", "添加笔记作为上下文", () => this.pickNote()).addClass("ai-agent-add-note");
+    this.iconButton(footer, "sparkles", "快捷提示词", (evt) => this.openQuickPrompts(evt));
     // A button + Obsidian Menu instead of a native <select>: on macOS the native popup opens on
     // mousedown, the same moment Obsidian activates the sidebar leaf, and it closed right away.
     // The menu opens on click, after the leaf switch is done.
     this.modelPicker = footer.createEl("button", { cls: "ai-agent-model-picker", attr: { "aria-label": "选择模型", "aria-haspopup": "menu" } });
     this.modelPicker.addEventListener("click", (evt) => this.openModelMenu(evt));
-    this.iconButton(footer, "sparkles", "快捷提示词", (evt) => this.openQuickPrompts(evt));
     footer.createDiv({ cls: "ai-agent-spacer" });
     this.sendBtn = footer.createEl("button", { cls: "mod-cta ai-agent-send" });
     this.sendBtn.addEventListener("click", () => void this.onSendClick());
@@ -388,12 +396,20 @@ export class ChatView extends ItemView {
 
     const bar = this.contextBarEl;
     bar.empty();
-    bar.createSpan({ cls: "ai-agent-context-label", text: "上下文" });
+    const budget = this.plugin.settings.maxContextTokens;
+    const tokensOf = (kind: string) => items.filter((it) => it.kind === kind).reduce((n, it) => n + estimateTokens(it.content), 0);
+    const totalTokens = items.reduce((n, it) => n + estimateTokens(it.content), 0);
+    const over = totalTokens > budget;
 
     if (currentLabel) {
-      const chip = this.chip(bar, "file-text", currentExcluded ? `${currentLabel}（已排除）` : currentLabel, this.useCurrentFile && !currentExcluded);
-      chip.setAttr("aria-label", currentExcluded ? "该笔记位于排除文件夹中，不会发送" : "点击切换：是否附带当前笔记");
-      if (!currentExcluded) {
+      const active = this.useCurrentFile && !currentExcluded;
+      const chip = this.chip(bar, "file-text", currentExcluded ? `${currentLabel}（已排除）` : currentLabel, active);
+      if (currentExcluded) {
+        chip.setAttr("aria-label", "该笔记位于排除文件夹中，不会发送");
+      } else {
+        const t = tokensOf("current-file");
+        chip.setAttr("aria-label", `${active ? `当前笔记 · 约 ${t.toLocaleString()} tokens` : "当前笔记（未附带）"}\n点击切换是否发送`);
+        if (active && over) this.markOverBudget(chip, budget);
         chip.addEventListener("click", () => {
           this.useCurrentFile = !this.useCurrentFile;
           this.refreshContextBar(true);
@@ -402,7 +418,7 @@ export class ChatView extends ItemView {
     }
     if (selectionChars > 0 && !currentExcluded) {
       const chip = this.chip(bar, "text-cursor-input", `选中文本 · ${selectionChars} 字`, this.useSelection);
-      chip.setAttr("aria-label", "点击切换：是否附带选中文本");
+      chip.setAttr("aria-label", `${this.useSelection ? `选中文本 · 约 ${tokensOf("selection").toLocaleString()} tokens` : "选中文本（未附带）"}\n点击切换是否发送`);
       chip.addEventListener("click", () => {
         this.useSelection = !this.useSelection;
         this.refreshContextBar(true);
@@ -411,7 +427,7 @@ export class ChatView extends ItemView {
     for (const path of this.attachedPaths) {
       const name = path.split("/").pop()?.replace(/\.md$/, "") ?? path;
       const chip = this.chip(bar, "paperclip", name, true);
-      chip.setAttr("aria-label", path);
+      chip.setAttr("aria-label", `${path}\n点击 × 移除`);
       const x = chip.createSpan({ cls: "ai-agent-chip-remove", attr: { "aria-label": "移除" } });
       setIcon(x, "x");
       x.addEventListener("click", (e) => {
@@ -420,28 +436,23 @@ export class ChatView extends ItemView {
         this.refreshContextBar(true);
       });
     }
-    const add = bar.createEl("button", { cls: "ai-agent-chip ai-agent-chip-add", attr: { "aria-label": "添加笔记作为上下文" } });
-    setIcon(add.createSpan(), "plus");
-    add.createSpan({ text: "添加笔记" });
-    add.addEventListener("click", () =>
-      new NoteSuggestModal(
-        this.app,
-        (f) => this.plugin.context.isExcluded(f.path) || this.attachedPaths.includes(f.path),
-        (f: TFile) => {
-          this.attachedPaths.push(f.path);
-          this.refreshContextBar(true);
-        },
-      ).open(),
-    );
+    bar.toggle(bar.childElementCount > 0);
+  }
 
-    const tokens = items.reduce((n, it) => n + estimateTokens(it.content), 0);
-    const budget = this.plugin.settings.maxContextTokens;
-    const est = bar.createSpan({ cls: "ai-agent-context-tokens" });
-    est.setText(`≈ ${tokens.toLocaleString()} tokens${this.attachedPaths.length ? " + 附加笔记" : ""}`);
-    if (tokens > budget) {
-      est.addClass("is-warning");
-      est.setAttr("aria-label", `超出上下文上限 ${budget}，发送时将截断`);
-    }
+  private markOverBudget(chip: HTMLElement, budget: number): void {
+    chip.addClass("is-warning");
+    chip.setAttr("aria-label", `${chip.getAttr("aria-label")}\n超出上下文上限 ${budget.toLocaleString()} tokens，发送时将截断`);
+  }
+
+  private pickNote(): void {
+    new NoteSuggestModal(
+      this.app,
+      (f) => this.plugin.context.isExcluded(f.path) || this.attachedPaths.includes(f.path),
+      (f: TFile) => {
+        this.attachedPaths.push(f.path);
+        this.refreshContextBar(true);
+      },
+    ).open();
   }
 
   private chip(parent: HTMLElement, icon: string, text: string, active: boolean): HTMLElement {
@@ -507,7 +518,7 @@ export class ChatView extends ItemView {
     empty.createDiv({
       cls: "ai-agent-empty-desc",
       text: this.plugin.settings.providers.length
-        ? "AI 可以读取下方“上下文”中列出的笔记内容。点击 ✨ 使用快捷提示词，或在编辑器中选中文本后使用“AI 编辑”。"
+        ? "输入框上方列出的笔记会作为上下文发送，点击可切换。点击 + 添加更多笔记，✨ 使用快捷提示词；在编辑器中选中文本后也可以使用“AI 编辑”。"
         : "尚未配置模型。请先在插件设置中添加模型服务（填写 Endpoint、API Key 与 Model ID）。",
     });
   }
