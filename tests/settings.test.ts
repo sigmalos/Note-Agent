@@ -1,8 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { normalizeModelList, normalizeSettings } from "../src/settings/settings";
+import { normalizeModelList, normalizeSettings, rememberModel } from "../src/settings/settings";
+import { defaultProviderName, newProviderConfig } from "../src/providers/presets";
+import { serviceNameOf } from "../src/utils/url";
 import { KeyStore, type SecretStorageLike } from "../src/settings/key-store";
 import { LLMRouter } from "../src/core/llm-router";
 import type { HttpTransport } from "../src/core/http";
+
+describe("provider names", () => {
+  it("derives names without brackets", () => {
+    expect(serviceNameOf("https://llmapi.paratera.com")).toBe("Paratera");
+    expect(serviceNameOf("api.example.com.cn/v1")).toBe("Example");
+    expect(serviceNameOf("http://localhost:11434/v1")).toBe("localhost");
+    expect(defaultProviderName("qwen", "")).toBe("通义千问");
+    expect(defaultProviderName("ollama", "")).toBe("Ollama");
+    expect(defaultProviderName("custom", "https://llmapi.paratera.com")).toBe("Paratera");
+    expect(defaultProviderName("custom", "")).toBe("自定义服务商");
+    expect(newProviderConfig("deepseek", "id")).toMatchObject({ name: "DeepSeek 深度求索", model: "", models: [] });
+  });
+});
 
 describe("normalizeSettings", () => {
   it("fills defaults for empty data", () => {
@@ -26,9 +41,15 @@ describe("normalizeSettings", () => {
     expect(s.excludedFolders).toEqual(["Private"]);
   });
 
-  it("keeps a clean list of extra models per provider", () => {
-    const s = normalizeSettings({ providers: [{ id: "a", model: "m1", models: [" m2 ", "m1", "", "m2", "m3"] }] });
-    expect(s.providers[0].models).toEqual(["m2", "m3"]);
+  it("keeps clean detected and recent model lists per provider", () => {
+    const s = normalizeSettings({ providers: [{ id: "a", model: "m1", models: [" m2 ", "m1", "", "m2", "m3"], recentModels: ["a", "b", "c", "d", "e", "f"] }] });
+    expect(s.providers[0].models).toEqual(["m2", "m1", "m3"]);
+    expect(s.providers[0].recentModels).toEqual(["a", "b", "c", "d", "e"]);
+    const cfg = s.providers[0];
+    rememberModel(cfg, "c");
+    expect(cfg.model).toBe("c");
+    expect(cfg.recentModels).toEqual(["c", "a", "b", "d", "e"]);
+    expect(normalizeSettings({ providers: [{ id: "x", endpoint: "https://e" }] }).providers[0]).toMatchObject({ model: "", models: [] });
     expect(normalizeModelList("a, b\nc\n\na", "c")).toEqual(["a", "b"]);
     expect(normalizeModelList(undefined)).toEqual([]);
   });

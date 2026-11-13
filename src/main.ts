@@ -63,8 +63,6 @@ export default class AIAgentPlugin extends Plugin {
   async saveSettings(): Promise<void> {
     logger.debugEnabled = this.settings.debugLogging;
     await this.saveData(this.settings);
-    // Endpoint or key may have changed: fetch model lists again next time.
-    this.models?.clear();
     for (const view of this.chatViews()) view.refreshModels();
   }
 

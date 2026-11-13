@@ -72,8 +72,23 @@ export class OpenAICompatibleProvider implements LLMProvider {
         problems.push(`API Endpoint 不是合法的 URL：${this.config.endpoint}`);
       }
     }
-    if (!this.config.model?.trim()) problems.push("缺少 Model ID");
     return problems;
+  }
+
+  async detectModels(signal?: AbortSignal): Promise<ConnectionTestResult> {
+    const started = Date.now();
+    try {
+      const models = (await this.listModels(signal)).map((m) => m.id);
+      return { ok: true, latencyMs: Date.now() - started, models };
+    } catch (err) {
+      const e = toLLMError(err, "检测模型");
+      // Some services have no /models endpoint: a chat request still proves the connection.
+      if ((e.kind === "not_found" || e.kind === "bad_response") && this.config.model?.trim()) {
+        const r = await this.testConnection(signal);
+        return { ...r, latencyMs: Date.now() - started, models: [] };
+      }
+      return { ok: false, latencyMs: Date.now() - started, error: e.toUserMessage() };
+    }
   }
 
   async testConnection(signal?: AbortSignal): Promise<ConnectionTestResult> {
@@ -124,13 +139,13 @@ export class OpenAICompatibleProvider implements LLMProvider {
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
-    this.assertValid();
+    this.assertValid(request);
     const res = await this.send(request, false, "模型请求");
     return parseCompletionJSON(await res.text());
   }
 
   async *streamChat(request: ChatRequest): AsyncIterable<ChatChunk> {
-    this.assertValid();
+    this.assertValid(request);
     if (!this.capabilities.streaming) {
       const r = await this.chat(request);
       if (r.reasoning) yield { type: "reasoning", text: r.reasoning };
@@ -203,8 +218,9 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
   /* -------------------------------- internals ------------------------------- */
 
-  private assertValid(): void {
+  private assertValid(request?: ChatRequest): void {
     const problems = this.validateConfig();
+    if (request && !this.modelFor(request)) problems.push("尚未选择模型，请在 AI Chat 输入框下方的模型按钮中选择");
     if (problems.length) throw new LLMError("config", { detail: problems.join("；") });
   }
 
@@ -225,7 +241,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
   }
 
   private modelFor(request: ChatRequest): string {
-    return (request.model?.trim() || this.config.model).trim();
+    return (request.model?.trim() || this.config.model || "").trim();
   }
 
   /**

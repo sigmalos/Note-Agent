@@ -5,14 +5,15 @@ import type { ProviderConfig } from "../src/providers/base/provider.types";
 
 describe("chat options", () => {
   it("falls back to defaults for unknown ids", () => {
-    expect(effortOption(undefined).id).toBe("medium");
+    expect(effortOption(undefined).id).toBe("low");
     expect(modeOption(undefined).id).toBe("ask");
     expect(effortOption("max").short).toBe("Max");
   });
 
-  it("puts the default and frequently used models first, then the rest", () => {
-    const r = modelChoices({ model: "a", models: ["b", "a", " "] }, ["c", "b", "a", "d", "c"]);
-    expect(r).toEqual({ pinned: ["a", "b"], others: ["c", "d"] });
+  it("puts recently used models first, then the detected list", () => {
+    expect(modelChoices({ model: "a", recentModels: ["b", "a"], models: ["x", "b"] })).toEqual({ recent: ["b", "a"], all: ["x"] });
+    expect(modelChoices({ model: "", models: ["x"] }, ["c", "b", "c", " "])).toEqual({ recent: [], all: ["c", "b"] });
+    expect(modelChoices({ model: "" })).toEqual({ recent: [], all: [] });
   });
 });
 
@@ -48,5 +49,8 @@ describe("ModelCatalog", () => {
     await cat.load(cfg(), true);
     expect(cat.get(cfg())).toEqual({ status: "error", error: "401", ids: ["m1"] });
     expect(cat.get({ ...cfg(), endpoint: "https://y" })).toEqual({ status: "idle" });
+    cat.prime(cfg(), ["z"]);
+    expect(cat.get(cfg())).toEqual({ status: "ready", ids: ["z"] });
+    expect(cat.isStale(cfg())).toBe(false);
   });
 });

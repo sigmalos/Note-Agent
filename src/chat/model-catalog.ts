@@ -67,6 +67,11 @@ export class ModelCatalog {
     return entry.inflight;
   }
 
+  /** Record a list obtained elsewhere (e.g. when the provider was just configured). */
+  prime(cfg: ProviderConfig, ids: string[]): void {
+    this.entries.set(cfg.id, { key: this.keyOf(cfg), state: { status: "ready", ids }, at: this.now() });
+  }
+
   clear(): void {
     this.entries.clear();
   }

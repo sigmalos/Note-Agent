@@ -235,8 +235,37 @@ describe.each(transports)("OpenAICompatibleProvider over %s transport", (_name, 
     expect((await p.listModels()).map((m) => m.id)).toEqual(["a", "b"]);
   });
 
+  it("detects models without a model chosen, falling back to chat when /models is missing", async () => {
+    handler = (req, _body, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ data: [{ id: "b" }, { id: "a" }] }));
+    };
+    const noModel = new OpenAICompatibleProvider(cfg({ model: "" }), makeTransport());
+    expect(noModel.validateConfig()).toEqual([]);
+    expect(await noModel.detectModels()).toMatchObject({ ok: true, models: ["a", "b"] });
+
+    handler = (req, _body, res) => {
+      if (req.url === "/v1/models") {
+        res.writeHead(404, { "Content-Type": "text/plain" });
+        res.end("not found");
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ choices: [{ message: { content: "pong" } }] }));
+    };
+    expect(await new OpenAICompatibleProvider(cfg(), makeTransport()).detectModels()).toMatchObject({ ok: true, models: [], sample: "pong" });
+    expect(await noModel.detectModels()).toMatchObject({ ok: false });
+
+    handler = (_req, _body, res) => {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "bad key" } }));
+    };
+    expect(await noModel.detectModels()).toMatchObject({ ok: false });
+  });
+
   it("rejects incomplete configs before sending anything", async () => {
     const p = new OpenAICompatibleProvider(cfg({ model: "" }), makeTransport());
     await expect(p.chat({ messages: [] })).rejects.toMatchObject({ kind: "config" });
+    await expect(collect(p.streamChat({ messages: [] }))).rejects.toMatchObject({ kind: "config", message: expect.stringContaining("尚未选择模型") });
   });
 });

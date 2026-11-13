@@ -12,6 +12,7 @@ function provider(gen: (req: ChatRequest) => AsyncGenerator<ChatChunk>): LLMProv
     capabilities: { streaming: true, listModels: false },
     validateConfig: () => [],
     testConnection: async () => ({ ok: true, latencyMs: 0 }),
+    detectModels: async () => ({ ok: true, latencyMs: 0, models: [] }),
     listModels: async () => [],
     chat: async () => ({ content: "", reasoning: "" }),
     streamChat: gen,

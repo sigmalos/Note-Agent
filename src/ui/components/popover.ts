@@ -18,6 +18,8 @@ export interface PopoverItem {
   checked?: boolean;
   /** Extra text matched by the search box. */
   keywords?: string;
+  /** Run onSelect without closing the list (e.g. "refresh"). */
+  keepOpen?: boolean;
   onSelect: () => void;
 }
 
@@ -39,7 +41,12 @@ export interface PopoverOptions {
   maxWidth?: number;
   maxHeight?: number;
   /** Show a filter box when the list has at least `minItems` items (default 8). */
-  search?: { placeholder: string; minItems?: number };
+  search?: {
+    placeholder: string;
+    minItems?: number;
+    /** Extra entry for the typed text (e.g. "use this model id"); null = none. */
+    custom?: (query: string) => PopoverItem | null;
+  };
   /** Where focus goes after the popover closes (e.g. back to the chat input). */
   focusAfter?: () => HTMLElement | null;
   onClose?: () => void;
@@ -65,6 +72,7 @@ export class Popover {
   private listEl: HTMLElement | null = null;
   private searchEl: HTMLInputElement | null = null;
   private emptyEl: HTMLElement | null = null;
+  private customRow: Row | null = null;
   private rows: Row[] = [];
   private active = -1;
   private query = "";
@@ -198,6 +206,7 @@ export class Popover {
     const list = this.listEl!;
     list.empty();
     this.rows = [];
+    this.customRow = null;
     this.active = -1;
     for (const entry of entries) {
       if (entry.type === "separator") {
@@ -215,31 +224,39 @@ export class Popover {
         note.createSpan({ text: entry.text });
         continue;
       }
-      const index = this.rows.length;
-      const row = list.createDiv({
-        cls: `ai-agent-popover-item${entry.checked ? " is-checked" : ""}`,
-        attr: { role: "option", "aria-selected": String(!!entry.checked), id: `${this.el!.id}-${index}` },
-      });
-      if (entry.icon) setIconAny(row.createSpan({ cls: "ai-agent-popover-icon" }), [entry.icon].flat());
-      const text = row.createDiv({ cls: "ai-agent-popover-text" });
-      const titleLine = text.createDiv({ cls: "ai-agent-popover-title-line" });
-      titleLine.createSpan({ cls: "ai-agent-popover-title", text: entry.title });
-      if (entry.badge) titleLine.createSpan({ cls: "ai-agent-popover-badge", text: entry.badge });
-      if (entry.subtitle) text.createDiv({ cls: `ai-agent-popover-subtitle${entry.warn ? " is-warning" : ""}`, text: entry.subtitle });
-      const check = row.createSpan({ cls: "ai-agent-popover-check" });
-      if (entry.checked) setIcon(check, "check");
-      // pointermove (not mouseenter) so scrolling the list under a still mouse doesn't steal the highlight
-      row.addEventListener("pointermove", () => this.setActive(index, false));
-      row.addEventListener("click", () => this.select(index));
-      this.rows.push({ entry, el: row, visible: true });
+      this.rows.push(this.createRow(entry, this.rows.length, list));
     }
     this.emptyEl = list.createDiv({ cls: "ai-agent-popover-note ai-agent-popover-empty", text: "没有匹配的结果" });
     this.applyFilter(this.query, keepActiveId);
   }
 
+  private createRow(entry: PopoverItem, index: number, list: HTMLElement): Row {
+    const row = list.createDiv({
+      cls: `ai-agent-popover-item${entry.checked ? " is-checked" : ""}`,
+      attr: { role: "option", "aria-selected": String(!!entry.checked), id: `${this.el!.id}-${index}` },
+    });
+    if (entry.icon) setIconAny(row.createSpan({ cls: "ai-agent-popover-icon" }), [entry.icon].flat());
+    const text = row.createDiv({ cls: "ai-agent-popover-text" });
+    const titleLine = text.createDiv({ cls: "ai-agent-popover-title-line" });
+    titleLine.createSpan({ cls: "ai-agent-popover-title", text: entry.title });
+    if (entry.badge) titleLine.createSpan({ cls: "ai-agent-popover-badge", text: entry.badge });
+    if (entry.subtitle) text.createDiv({ cls: `ai-agent-popover-subtitle${entry.warn ? " is-warning" : ""}`, text: entry.subtitle });
+    const check = row.createSpan({ cls: "ai-agent-popover-check" });
+    if (entry.checked) setIcon(check, "check");
+    // pointermove (not mouseenter) so scrolling the list under a still mouse doesn't steal the highlight
+    row.addEventListener("pointermove", () => this.setActive(this.rows.findIndex((r) => r.el === row), false));
+    row.addEventListener("click", () => this.select(this.rows.findIndex((r) => r.el === row)));
+    return { entry, el: row, visible: true };
+  }
+
   private applyFilter(query: string, keepActiveId?: string): void {
     this.query = query;
     const filtering = query.trim() !== "";
+    if (this.customRow) {
+      this.customRow.el.remove();
+      this.rows = this.rows.filter((r) => r !== this.customRow);
+      this.customRow = null;
+    }
     for (const r of this.rows) {
       r.visible = !filtering || matchesQuery(query, r.entry.title, r.entry.subtitle, r.entry.keywords, r.entry.badge);
       r.el.toggle(r.visible);
@@ -260,6 +277,14 @@ export class Popover {
       }
     }
     flush();
+    const custom = filtering ? this.opts.search?.custom?.(query.trim()) ?? null : null;
+    if (custom && this.listEl) {
+      const row = this.createRow(custom, this.rows.length, this.listEl);
+      row.el.addClass("is-custom");
+      if (this.emptyEl) this.listEl.insertBefore(row.el, this.emptyEl);
+      this.rows.push(row);
+      this.customRow = row;
+    }
     const visible = this.rows.filter((r) => r.visible);
     this.emptyEl?.toggle(filtering && visible.length === 0);
 
@@ -284,6 +309,10 @@ export class Popover {
     this.el.style.bottom = `${p.bottom}px`;
     this.el.style.width = `${p.width}px`;
     this.el.style.maxHeight = `${p.maxHeight}px`;
+    // Grow out of the button, wherever the list ended up horizontally.
+    const a = this.anchor;
+    const anchorCenter = (layoutRect(a, this.boundary, boundary)?.left ?? a.getBoundingClientRect().left) - boundary.left + a.offsetWidth / 2;
+    this.el.style.transformOrigin = `${Math.round(Math.min(Math.max(anchorCenter - p.left, 0), p.width))}px 100%`;
   }
 
   private setActive(index: number, scroll: boolean): void {
@@ -320,6 +349,10 @@ export class Popover {
   private select(index: number): void {
     const row = this.rows[index];
     if (!row?.visible) return;
+    if (row.entry.keepOpen) {
+      row.entry.onSelect();
+      return;
+    }
     this.close(true);
     row.entry.onSelect();
   }
@@ -332,6 +365,7 @@ export class Popover {
     this.listEl = null;
     this.searchEl = null;
     this.emptyEl = null;
+    this.customRow = null;
     this.rows = [];
     this.active = -1;
     this.anchor.removeClass("is-open");

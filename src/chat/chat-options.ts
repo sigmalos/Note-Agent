@@ -11,12 +11,12 @@ export interface ChatOption<T extends string> {
   icons: string[];
 }
 
-export const DEFAULT_EFFORT: ReasoningEffort = "medium";
+export const DEFAULT_EFFORT: ReasoningEffort = "low";
 export const DEFAULT_MODE: ChatMode = "ask";
 
 export const EFFORT_OPTIONS: ChatOption<ReasoningEffort>[] = [
-  { id: "low", short: "低", title: "低", description: "少思考，回答最快", icons: ["signal-low"] },
-  { id: "medium", short: "中", title: "中", description: "速度与质量平衡（默认）", icons: ["signal-medium"] },
+  { id: "low", short: "低", title: "低", description: "少思考，回答最快（默认）", icons: ["signal-low"] },
+  { id: "medium", short: "中", title: "中", description: "速度与质量平衡", icons: ["signal-medium"] },
   { id: "high", short: "高", title: "高", description: "更深入地推理，适合复杂问题", icons: ["signal-high"] },
   { id: "max", short: "Max", title: "Max", description: "尽可能充分地思考，耗时与用量最高", icons: ["signal", "signal-high"] },
 ];
@@ -54,19 +54,22 @@ export function modeOption(id: ChatMode | undefined): ChatOption<ChatMode> {
 }
 
 /**
- * Models offered for a provider: its default model and the user's frequently used list first,
- * then whatever the server reported (deduplicated, original server order).
+ * Models offered for a provider: recently picked ones first, then every detected model
+ * (stored at configuration time, refreshed from the server) in server order, without duplicates.
  */
-export function modelChoices(cfg: Pick<ProviderConfig, "model" | "models">, fetched: string[] = []): { pinned: string[]; others: string[] } {
-  const pinned: string[] = [];
-  for (const m of [cfg.model, ...(cfg.models ?? [])]) {
-    const id = m?.trim();
-    if (id && !pinned.includes(id)) pinned.push(id);
-  }
-  const others: string[] = [];
-  for (const m of fetched) {
-    const id = m.trim();
-    if (id && !pinned.includes(id) && !others.includes(id)) others.push(id);
-  }
-  return { pinned, others };
+export function modelChoices(
+  cfg: Pick<ProviderConfig, "model" | "models" | "recentModels">,
+  fetched: string[] = [],
+): { recent: string[]; all: string[] } {
+  const uniq = (list: Array<string | undefined>) => {
+    const out: string[] = [];
+    for (const m of list) {
+      const id = m?.trim();
+      if (id && !out.includes(id)) out.push(id);
+    }
+    return out;
+  };
+  const recent = uniq([...(cfg.recentModels ?? []), cfg.model]);
+  const all = uniq([...(fetched.length ? fetched : cfg.models ?? [])]).filter((m) => !recent.includes(m));
+  return { recent, all };
 }

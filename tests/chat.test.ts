@@ -38,6 +38,7 @@ function fakeProvider(script: (req: ChatRequest) => AsyncGenerator<ChatChunk>): 
     capabilities: { streaming: true, listModels: false },
     validateConfig: () => [],
     testConnection: async () => ({ ok: true, latencyMs: 0 }),
+    detectModels: async () => ({ ok: true, latencyMs: 0, models: [] }),
     listModels: async () => [],
     chat: async () => ({ content: "", reasoning: "" }),
     streamChat: (req) => script(req),
@@ -197,14 +198,14 @@ describe("ChatController", () => {
     expect(u.contextText).toContain("笔记内容");
     expect(a).toMatchObject({ role: "assistant", content: "你好", reasoning: "思考", status: "done", modelName: "Fake" });
     expect(requests[0].messages[0].content).toContain("笔记内容");
-    expect(requests[0]).toMatchObject({ model: "Fake", reasoningEffort: "medium" });
+    expect(requests[0]).toMatchObject({ model: "Fake", reasoningEffort: "low" });
     expect((await store.load(session.id))?.messages).toHaveLength(2);
   });
 
   it("new sessions inherit the previous choices", () => {
     const s = createSession({ providerId: "p", model: "m", effort: "max", mode: "auto" });
     expect(s).toMatchObject({ providerId: "p", model: "m", effort: "max", mode: "auto", messages: [] });
-    expect(createSession()).toMatchObject({ providerId: "", model: "", effort: "medium", mode: "ask" });
+    expect(createSession()).toMatchObject({ providerId: "", model: "", effort: "low", mode: "ask" });
   });
 
   it("marks errors with a user-facing message and supports regenerate", async () => {

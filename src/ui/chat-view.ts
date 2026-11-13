@@ -14,17 +14,19 @@ import { confirmDialog } from "./components/confirm-modal";
 import { NoteSuggestModal } from "./components/note-suggest-modal";
 import { animateOut, flash, prefersReducedMotion } from "./components/motion";
 import { setIconAny } from "./components/icons";
-import { Popover, type PopoverEntry, type PopoverOptions } from "./components/popover";
+import { Popover, type PopoverEntry, type PopoverItem, type PopoverOptions } from "./components/popover";
 import { promptText } from "./components/text-input-modal";
 import { ContextViewerModal } from "./context-viewer-modal";
 import { SessionListModal } from "./session-list-modal";
 import type { ProviderConfig } from "../providers/base/provider.types";
+import { rememberModel } from "../settings/settings";
 import { hostOf } from "../utils/url";
 
 /** A composer button that opens an upward list. */
 interface Picker {
   btn: HTMLButtonElement;
   popover: Popover;
+  entries: () => PopoverEntry[];
 }
 
 interface RenderedMessage {
@@ -156,6 +158,10 @@ export class ChatView extends ItemView {
       new Notice("AI 正在生成中，请稍后或先停止当前生成。");
       return;
     }
+    if (!this.ensureModel()) {
+      this.inputEl.value = text;
+      return;
+    }
     await this.controller.send(text);
   }
 
@@ -231,20 +237,14 @@ export class ChatView extends ItemView {
     this.iconButton(footer, "plus", "添加笔记作为上下文", () => this.pickNote()).addClass("ai-agent-add-note");
     // All lists open upwards from their button and share the plugin popover (a native <select>
     // closed instantly when the sidebar leaf activated, and Obsidian's Menu is native on macOS).
-    this.promptsPicker = this.picker(footer, "快捷提示词", () => this.quickPromptEntries(), {
-      cls: "ai-agent-prompts-popover",
-      minWidth: 280,
-      maxWidth: 380,
-    });
-    this.promptsPicker.btn.className = "clickable-icon ai-agent-prompts-btn";
-    setIcon(this.promptsPicker.btn, "sparkles");
     const pickers = footer.createDiv({ cls: "ai-agent-pickers" });
     this.providerPicker = this.picker(pickers, "选择服务商", () => this.providerEntries(), { minWidth: 260 });
     this.providerPicker.btn.addClass("is-provider");
     this.modelPicker = this.picker(pickers, "选择模型", () => this.openModelList(), {
       minWidth: 260,
       maxHeight: 420,
-      search: { placeholder: "搜索模型…", minItems: 8 },
+      // Always show the box: it filters the list and also accepts a model id typed by hand.
+      search: { placeholder: "搜索或输入模型 ID…", minItems: 0, custom: (q) => this.customModelEntry(q) },
     });
     this.modelPicker.btn.addClass("is-model");
     this.effortPicker = this.picker(pickers, "思考强度", () => this.effortEntries(), { minWidth: 250, cls: "is-wrapping" });
@@ -258,6 +258,13 @@ export class ChatView extends ItemView {
       if (e.target === footer || e.target === pickers) this.inputEl.focus();
     });
     this.sendBtn.addEventListener("click", () => void this.onSendClick());
+    this.promptsPicker = this.picker(footer, "快捷提示词", () => this.quickPromptEntries(), {
+      cls: "ai-agent-prompts-popover",
+      minWidth: 280,
+      maxWidth: 380,
+    });
+    this.promptsPicker.btn.className = "clickable-icon ai-agent-prompts-btn";
+    setIcon(this.promptsPicker.btn, "sparkles");
     this.updateSendButton();
     this.setupResizer();
   }
@@ -368,21 +375,28 @@ export class ChatView extends ItemView {
       attr: { "aria-label": label, "aria-haspopup": "listbox", "aria-expanded": "false" },
     });
     const popover = new Popover(this.app, btn, this.contentEl, { focusAfter: () => this.inputEl, ...opts });
+    const picker: Picker = { btn, popover, entries };
     btn.addEventListener("click", () => {
-      // Only one list open at a time.
-      for (const p of this.pickers()) if (p.popover !== popover) p.popover.close();
-      popover.toggle(entries);
+      if (popover.isOpen) popover.close();
+      else this.openPicker(picker);
     });
-    return { btn, popover };
+    return picker;
+  }
+
+  private openPicker(picker: Picker): void {
+    // Only one list open at a time.
+    for (const p of this.pickers()) if (p !== picker) p.popover.close();
+    if (!picker.popover.isOpen) picker.popover.open(picker.entries());
   }
 
   private pickers(): Picker[] {
     return [this.promptsPicker, this.providerPicker, this.modelPicker, this.effortPicker, this.modePicker].filter(Boolean);
   }
 
-  private setPickerLabel(p: Picker, icons: string[], text: string, tooltip: string): void {
+  private setPickerLabel(p: Picker, icons: string[], text: string, tooltip: string, placeholder = false): void {
     const { btn } = p;
     btn.empty();
+    btn.toggleClass("is-placeholder", placeholder);
     setIconAny(btn.createSpan({ cls: "ai-agent-picker-icon" }), icons);
     btn.createSpan({ cls: "ai-agent-picker-label", text });
     btn.setAttr("aria-label", tooltip);
@@ -418,8 +432,8 @@ export class ChatView extends ItemView {
     }
     const cfg = this.sessionProvider();
     const model = this.sessionModel();
-    this.setPickerLabel(this.providerPicker, ["server"], cfg?.name ?? "未配置", `服务商：${cfg?.name ?? "未配置"}`);
-    this.setPickerLabel(this.modelPicker, ["box", "cpu"], model || "未配置", `模型：${model || "未配置"}`);
+    this.setPickerLabel(this.providerPicker, ["server"], cfg?.name ?? "请配置服务商", cfg ? `服务商：${cfg.name}` : "尚未配置服务商，点击添加", !cfg);
+    this.setPickerLabel(this.modelPicker, ["box", "cpu"], model || "请选择模型", model ? `模型：${model}` : "尚未选择模型，点击选择", !model);
     const effort = effortOption(this.session.effort);
     this.setPickerLabel(this.effortPicker, ["brain", "lightbulb"], effort.short, `思考强度：${effort.title}（${effort.description}）`);
     const mode = modeOption(this.session.mode);
@@ -440,7 +454,7 @@ export class ChatView extends ItemView {
     const s = this.plugin.settings;
     const current = this.sessionProvider();
     const entries: PopoverEntry[] = [{ type: "label", text: "服务商" }];
-    if (!s.providers.length) entries.push({ type: "note", icon: "info", text: "尚未配置服务商" });
+    if (!s.providers.length) entries.push({ type: "note", icon: "info", text: "尚未配置服务商，添加后会自动检测可用模型" });
     for (const p of s.providers) {
       const missingKey = !this.plugin.keys.getKey(p);
       entries.push({
@@ -448,57 +462,116 @@ export class ChatView extends ItemView {
         icon: "server",
         title: p.name,
         badge: p.id === s.defaultProviderId ? "默认" : undefined,
-        subtitle: missingKey ? `${hostOf(p.endpoint)} · 未设置 API Key` : `${hostOf(p.endpoint)} · ${p.model}`,
+        subtitle: missingKey
+          ? `${hostOf(p.endpoint)} · 未设置 API Key`
+          : `${hostOf(p.endpoint)}${p.models?.length ? ` · ${p.models.length} 个模型` : ""}`,
         warn: missingKey,
         checked: current?.id === p.id,
         onSelect: () => void this.changeSession({ providerId: p.id, model: "" }, this.providerPicker),
       });
     }
     entries.push({ type: "separator" });
-    entries.push({ id: "manage", icon: "settings", title: "管理服务商…", onSelect: () => this.plugin.openSettings() });
+    entries.push(
+      s.providers.length
+        ? { id: "manage", icon: "settings", title: "管理服务商…", onSelect: () => this.plugin.openSettings() }
+        : { id: "manage", icon: "plus", title: "添加服务商…", onSelect: () => this.plugin.openSettings() },
+    );
     return entries;
   }
 
   /** Entries now, and refresh the open list once the provider's model list arrives. */
   private openModelList(): PopoverEntry[] {
     const cfg = this.sessionProvider();
-    if (cfg && this.plugin.models.isStale(cfg)) {
-      void this.plugin.models.load(cfg).then(() => {
-        if (this.modelPicker.popover.isOpen && this.sessionProvider()?.id === cfg.id) this.modelPicker.popover.update(this.modelEntries());
-      });
-    }
+    if (cfg && this.plugin.models.isStale(cfg)) void this.reloadModels(cfg, false);
     return this.modelEntries();
+  }
+
+  /** Fetch the provider's models, store them in its config and refresh an open list. */
+  private async reloadModels(cfg: ProviderConfig, force: boolean): Promise<void> {
+    const pending = this.plugin.models.load(cfg, force);
+    if (this.modelPicker.popover.isOpen) this.modelPicker.popover.update(this.modelEntries());
+    await pending;
+    const state = this.plugin.models.get(cfg);
+    if (state.status === "ready" && state.ids.join("\n") !== (cfg.models ?? []).join("\n")) {
+      cfg.models = state.ids;
+      await this.plugin.saveSettings();
+    }
+    if (this.modelPicker.popover.isOpen && this.sessionProvider()?.id === cfg.id) this.modelPicker.popover.update(this.modelEntries());
+  }
+
+  private async chooseModel(cfg: ProviderConfig, model: string): Promise<void> {
+    // The provider remembers it too: new sessions and AI editing use the last chosen model.
+    rememberModel(cfg, model);
+    await this.changeSession({ providerId: this.session.providerId, model }, this.modelPicker);
+    await this.plugin.saveSettings();
+  }
+
+  /** "Use this id" entry for a model typed into the search box that is not in the list. */
+  private customModelEntry(query: string): PopoverItem | null {
+    const cfg = this.sessionProvider();
+    const id = query.trim();
+    if (!cfg || !id || /\s/.test(id)) return null;
+    const state = this.plugin.models.get(cfg);
+    const { recent, all } = modelChoices(cfg, "ids" in state ? state.ids ?? [] : []);
+    // Hide it when the text names a listed model (ignoring case and separators, "kimik27").
+    const norm = (m: string) => m.toLowerCase().replace(/[\s\-_.·/:]+/g, "");
+    if ([...recent, ...all].some((m) => norm(m) === norm(id))) return null;
+    return { id: `custom:${id}`, icon: "plus", title: id, subtitle: "使用这个模型 ID", onSelect: () => void this.chooseModel(cfg, id) };
   }
 
   private modelEntries(): PopoverEntry[] {
     const cfg = this.sessionProvider();
     if (!cfg) {
       return [
-        { type: "note", icon: "info", text: "尚未配置服务商" },
-        { id: "manage", icon: "settings", title: "管理服务商…", onSelect: () => this.plugin.openSettings() },
+        { type: "note", icon: "info", text: "请先配置服务商，模型会在连接成功后自动检测" },
+        { id: "manage", icon: "plus", title: "添加服务商…", onSelect: () => this.plugin.openSettings() },
       ];
     }
     const state = this.plugin.models.get(cfg);
-    const fetched = "ids" in state ? state.ids ?? [] : [];
-    const { pinned, others } = modelChoices(cfg, fetched);
+    const { recent, all } = modelChoices(cfg, state.status === "ready" ? state.ids : []);
     const current = this.sessionModel();
-    if (current && !pinned.includes(current) && !others.includes(current)) pinned.push(current);
     const item = (id: string): PopoverEntry => ({
       id,
       icon: "box",
       title: id,
-      badge: id === cfg.model ? "默认" : undefined,
       checked: id === current,
-      onSelect: () => void this.changeSession({ model: id === cfg.model ? "" : id }, this.modelPicker),
+      onSelect: () => void this.chooseModel(cfg, id),
     });
 
-    const entries: PopoverEntry[] = [{ type: "label", text: `常用模型 · ${cfg.name}` }, ...pinned.map(item)];
-    if (state.status === "loading") entries.push({ type: "note", loading: true, text: "正在获取服务端模型列表…" });
-    if (state.status === "error") entries.push({ type: "note", warn: true, icon: "alert-triangle", text: `获取模型列表失败：${state.error.split("\n")[0]}` });
-    if (others.length) entries.push({ type: "label", text: `全部模型 · ${others.length}` }, ...others.map(item));
+    const entries: PopoverEntry[] = [];
+    if (recent.length) entries.push({ type: "label", text: "最近使用" }, ...recent.map(item));
+    if (all.length) entries.push({ type: "label", text: `${recent.length ? "全部模型" : cfg.name} · ${all.length + recent.length} 个` }, ...all.map(item));
+    if (state.status === "loading") entries.push({ type: "note", loading: true, text: all.length ? "正在刷新模型列表…" : "正在检测可用模型…" });
+    else if (state.status === "error") entries.push({ type: "note", warn: true, icon: "alert-triangle", text: `检测模型失败：${state.error.split("\n")[0]}` });
+    else if (!recent.length && !all.length && state.status === "ready")
+      entries.push({ type: "note", icon: "info", text: "服务未返回模型列表，可在上方直接输入模型 ID" });
     entries.push({ type: "separator" });
-    entries.push({ id: "manage", icon: "settings", title: "编辑常用模型…", onSelect: () => this.plugin.openSettings() });
+    entries.push({
+      id: "refresh",
+      icon: "refresh-cw",
+      title: "刷新模型列表",
+      keepOpen: true,
+      onSelect: () => void this.reloadModels(cfg, true),
+    });
+    entries.push({ id: "manage", icon: "settings", title: "管理服务商…", onSelect: () => this.plugin.openSettings() });
     return entries;
+  }
+
+  /** Before sending: make sure a provider and a model are chosen, otherwise open the list. */
+  private ensureModel(): boolean {
+    if (!this.sessionProvider()) {
+      new Notice("请先配置服务商。");
+      flash(this.providerPicker.btn, "is-shaking");
+      this.openPicker(this.providerPicker);
+      return false;
+    }
+    if (!this.sessionModel()) {
+      new Notice("请先选择模型。");
+      flash(this.modelPicker.btn, "is-shaking");
+      this.openPicker(this.modelPicker);
+      return false;
+    }
+    return true;
   }
 
   private effortEntries(): PopoverEntry[] {
@@ -803,7 +876,7 @@ export class ChatView extends ItemView {
       return;
     }
     const text = this.inputEl.value.trim();
-    if (!text) return;
+    if (!text || !this.ensureModel()) return;
     this.inputEl.value = "";
     await this.controller.send(text);
   }
@@ -816,7 +889,7 @@ export class ChatView extends ItemView {
     const first = this.sendBusy === null;
     this.sendBusy = busy;
     this.sendBtn.empty();
-    setIcon(this.sendBtn.createSpan({ cls: "ai-agent-send-icon" }), busy ? "square" : "arrow-up");
+    setIcon(this.sendBtn.createSpan({ cls: "ai-agent-send-icon" }), busy ? "square" : "arrow-left");
     this.sendBtn.toggleClass("is-busy", busy);
     this.sendBtn.setAttr("aria-label", busy ? "停止生成（Esc）" : "发送（Enter）");
     if (!first) flash(this.sendBtn, "is-swapping");

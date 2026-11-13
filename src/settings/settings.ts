@@ -68,7 +68,8 @@ export function normalizeProvider(raw: unknown, index: number): ProviderConfig |
     apiKey: typeof r.apiKey === "string" ? r.apiKey.trim() : "",
     apiKeySecretId: typeof r.apiKeySecretId === "string" && r.apiKeySecretId ? r.apiKeySecretId : undefined,
     model: typeof r.model === "string" ? r.model.trim() : "",
-    models: normalizeModelList(r.models, typeof r.model === "string" ? r.model.trim() : ""),
+    models: normalizeModelList(r.models),
+    recentModels: normalizeModelList(r.recentModels).slice(0, RECENT_MODELS_MAX),
     temperature: num(r.temperature, undefined, 0, 2),
     maxTokens: num(r.maxTokens, undefined, 1),
     topP: num(r.topP, undefined, 0, 1),
@@ -78,13 +79,15 @@ export function normalizeProvider(raw: unknown, index: number): ProviderConfig |
   };
 }
 
-/** Unique, trimmed model ids, without the default model (it is always offered anyway). */
-export function normalizeModelList(raw: unknown, defaultModel = ""): string[] {
+export const RECENT_MODELS_MAX = 5;
+
+/** Unique, trimmed model ids (optionally without `exclude`). */
+export function normalizeModelList(raw: unknown, exclude = ""): string[] {
   const list = Array.isArray(raw) ? raw : typeof raw === "string" ? raw.split(/[\n,]/) : [];
   const out: string[] = [];
   for (const m of list) {
     const id = String(m ?? "").trim();
-    if (id && id !== defaultModel && !out.includes(id)) out.push(id);
+    if (id && id !== exclude && !out.includes(id)) out.push(id);
   }
   return out;
 }
@@ -127,6 +130,12 @@ export function normalizeSettings(raw: unknown): PluginSettings {
         : DEFAULT_SETTINGS.translateTargetLanguage,
     debugLogging: r.debugLogging === true,
   };
+}
+
+/** Record `model` as the provider's current model and most recent choice. */
+export function rememberModel(cfg: ProviderConfig, model: string): void {
+  cfg.model = model;
+  cfg.recentModels = [model, ...normalizeModelList(cfg.recentModels, model)].slice(0, RECENT_MODELS_MAX);
 }
 
 export function generateId(prefix = "p"): string {

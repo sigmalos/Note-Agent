@@ -1,16 +1,25 @@
 import { App, ButtonComponent, Modal, Notice, Setting, TextComponent } from "obsidian";
 import type AIAgentPlugin from "../main";
 import type { ProviderConfig } from "../providers/base/provider.types";
-import { getPreset } from "../providers/presets";
-import { formatHeaderLines, normalizeModelList, normalizeProvider, parseHeaderLines } from "./settings";
+import { defaultProviderName, getPreset } from "../providers/presets";
+import { formatHeaderLines, normalizeProvider, parseHeaderLines } from "./settings";
 
-/** Create / edit a model service configuration (SRS §4.1.3). */
+/**
+ * Create / edit a provider (SRS §4.1.3): endpoint + key only. Models are detected from the
+ * service when connecting and picked later in the chat.
+ */
 export class ProviderModal extends Modal {
   private draft: ProviderConfig;
   private apiKey: string;
   private headersText: string;
   private statusEl!: HTMLElement;
-  private modelInput!: TextComponent;
+  private modelsEl!: HTMLElement;
+  private nameInput!: TextComponent;
+  private detectBtn!: ButtonComponent;
+  private saveBtn!: ButtonComponent;
+  /** Signature of the connection settings the current model list was detected with. */
+  private detectedFor: string | null = null;
+  private forceSave = false;
 
   constructor(
     app: App,
@@ -27,14 +36,19 @@ export class ProviderModal extends Modal {
 
   onOpen(): void {
     const { contentEl } = this;
-    this.setTitle(this.isNew ? "添加模型服务" : `编辑模型服务 · ${this.draft.name}`);
+    this.setTitle(this.isNew ? "添加服务商" : `编辑服务商 · ${this.draft.name}`);
     contentEl.addClass("ai-agent-provider-modal");
     const preset = getPreset(this.draft.presetId);
 
     new Setting(contentEl)
       .setName("显示名称")
-      .setDesc("在模型选择器中显示，例如“DeepSeek · 日常编辑”。")
-      .addText((t) => t.setValue(this.draft.name).onChange((v) => (this.draft.name = v)));
+      .setDesc("显示在 AI Chat 的服务商按钮上。留空时根据服务商或 Endpoint 自动命名。")
+      .addText((t) => {
+        this.nameInput = t;
+        t.setPlaceholder(defaultProviderName(this.draft.presetId, this.draft.endpoint))
+          .setValue(this.draft.name)
+          .onChange((v) => (this.draft.name = v));
+      });
 
     new Setting(contentEl)
       .setName("API Endpoint")
@@ -43,7 +57,10 @@ export class ProviderModal extends Modal {
         t
           .setPlaceholder("https://api.example.com/v1")
           .setValue(this.draft.endpoint)
-          .onChange((v) => (this.draft.endpoint = v.trim())),
+          .onChange((v) => {
+            this.draft.endpoint = v.trim();
+            this.nameInput.setPlaceholder(defaultProviderName(this.draft.presetId, this.draft.endpoint));
+          }),
       );
 
     new Setting(contentEl)
@@ -72,46 +89,25 @@ export class ProviderModal extends Modal {
         });
       });
 
-    const modelSetting = new Setting(contentEl)
-      .setName("Model ID")
-      .setDesc("默认使用的模型，例如 deepseek-chat、glm-4-flash、qwen-plus。可点击右侧按钮从服务端获取列表。")
-      .addText((t) => {
-        this.modelInput = t;
-        t.setPlaceholder("model-id").setValue(this.draft.model).onChange((v) => (this.draft.model = v.trim()));
+    // Connection check right under the credentials: it is what fills the model list.
+    const check = new Setting(contentEl)
+      .setName("可用模型")
+      .setDesc("连接成功后自动检测该服务提供的模型，在 AI Chat 输入框下方选择使用。")
+      .addButton((b) => {
+        this.detectBtn = b;
+        b.setButtonText("连接并检测模型").onClick(() => void this.detect());
       });
-    const datalist = modelSetting.controlEl.createEl("datalist", { attr: { id: `ai-agent-models-${this.draft.id}` } });
-    this.modelInput.inputEl.setAttr("list", datalist.id);
-    modelSetting.addExtraButton((b) =>
-      b
-        .setIcon("list")
-        .setTooltip("获取模型列表")
-        .onClick(async () => {
-          this.setStatus("正在获取模型列表…");
-          try {
-            const models = await this.plugin.router.providerFor(this.runtimeDraft()).listModels();
-            datalist.empty();
-            for (const m of models) datalist.createEl("option", { value: m.id });
-            this.setStatus(`获取到 ${models.length} 个模型，在 Model ID 输入框中输入或双击即可选择。`, "ok");
-            this.modelInput.inputEl.focus();
-          } catch (e) {
-            this.setStatus(`获取模型列表失败：${(e as Error).message}`, "error");
-          }
-        }),
-    );
+    check.settingEl.addClass("ai-agent-detect-setting");
+    this.statusEl = contentEl.createDiv({ cls: "ai-agent-status" });
+    this.modelsEl = contentEl.createDiv({ cls: "ai-agent-detected-models" });
+    if (this.draft.models?.length) this.showModels(this.draft.models, "已检测到的模型");
 
-    new Setting(contentEl)
-      .setName("常用模型")
-      .setDesc("每行一个，在对话的模型列表中置顶显示。服务端返回的其余模型也可以在列表中搜索选择。")
-      .addTextArea((t) => {
-        t.inputEl.rows = 3;
-        t.setPlaceholder("deepseek-reasoner\nqwen-max")
-          .setValue((this.draft.models ?? []).join("\n"))
-          .onChange((v) => (this.draft.models = normalizeModelList(v)));
-      });
-
-    contentEl.createEl("h4", { text: "生成参数（可选）" });
+    // Rarely needed options stay folded so the dialog fits on screen.
+    const advanced = contentEl.createEl("details", { cls: "ai-agent-provider-advanced" });
+    advanced.createEl("summary", { text: "高级选项（生成参数、超时、流式、Header）" });
+    const adv = advanced.createDiv();
     const numberSetting = (name: string, desc: string, key: "temperature" | "maxTokens" | "topP" | "timeout", placeholder: string) =>
-      new Setting(contentEl)
+      new Setting(adv)
         .setName(name)
         .setDesc(desc)
         .addText((t) => {
@@ -127,12 +123,12 @@ export class ProviderModal extends Modal {
     numberSetting("Top P", "核采样参数（0–1），留空使用默认值。", "topP", "默认");
     numberSetting("超时（秒）", "超过该时间未收到任何数据即判定超时。", "timeout", "120");
 
-    new Setting(contentEl)
+    new Setting(adv)
       .setName("流式输出")
       .setDesc("关闭后将等待完整结果再显示，用于兼容不支持 SSE 的服务。")
       .addToggle((t) => t.setValue(this.draft.enableStreaming !== false).onChange((v) => (this.draft.enableStreaming = v)));
 
-    new Setting(contentEl)
+    new Setting(adv)
       .setName("自定义 Header")
       .setDesc("每行一个，格式为 Header-Name: value。")
       .addTextArea((t) => {
@@ -140,37 +136,77 @@ export class ProviderModal extends Modal {
         t.setPlaceholder("X-Custom-Header: value").setValue(this.headersText).onChange((v) => (this.headersText = v));
       });
 
-    this.statusEl = contentEl.createDiv({ cls: "ai-agent-status" });
-
     const footer = new Setting(contentEl);
-    let testBtn: ButtonComponent;
-    footer.addButton((b) => {
-      testBtn = b;
-      b.setButtonText("测试连接").onClick(async () => {
-        testBtn.setDisabled(true);
-        this.setStatus("正在测试连接…");
-        const r = await this.plugin.router.providerFor(this.runtimeDraft()).testConnection();
-        testBtn.setDisabled(false);
-        if (r.ok) this.setStatus(`连接成功 · ${r.latencyMs} ms · ${r.model ?? ""}${r.sample ? ` · “${r.sample}”` : ""}`, "ok");
-        else this.setStatus(r.error ?? "连接失败", "error");
-      });
-    });
+    footer.settingEl.addClass("ai-agent-provider-footer");
     footer.addButton((b) => b.setButtonText("取消").onClick(() => this.close()));
-    footer.addButton((b) =>
-      b
-        .setButtonText("保存")
+    footer.addButton((b) => {
+      this.saveBtn = b;
+      b.setButtonText("保存")
         .setCta()
-        .onClick(async () => {
-          const cfg = this.collect();
-          if (!cfg.model || !cfg.endpoint) {
-            this.setStatus("API Endpoint 与 Model ID 为必填项。", "error");
-            return;
-          }
-          await this.onSave(cfg, this.apiKey);
-          new Notice(`已保存模型配置：${cfg.name}`);
-          this.close();
-        }),
-    );
+        .onClick(() => void this.save());
+    });
+  }
+
+  /** Connection settings the detected list belongs to. */
+  private signature(): string {
+    return JSON.stringify([this.draft.endpoint, this.apiKey, this.headersText]);
+  }
+
+  /** Verify endpoint + key by listing the service's models. */
+  private async detect(): Promise<boolean> {
+    if (!this.draft.endpoint) {
+      this.setStatus("请先填写 API Endpoint。", "error");
+      return false;
+    }
+    this.detectBtn.setDisabled(true);
+    this.saveBtn.setDisabled(true);
+    this.setStatus("正在连接并检测可用模型…");
+    const r = await this.plugin.router.providerFor(this.runtimeDraft()).detectModels();
+    this.detectBtn.setDisabled(false);
+    this.saveBtn.setDisabled(false);
+    if (!r.ok) {
+      this.setStatus(r.error ?? "连接失败", "error");
+      return false;
+    }
+    this.detectedFor = this.signature();
+    this.draft.models = r.models ?? [];
+    if (this.draft.model && this.draft.models.length && !this.draft.models.includes(this.draft.model)) this.draft.model = "";
+    if (this.draft.models.length) {
+      this.setStatus(`连接成功 · 检测到 ${this.draft.models.length} 个模型 · ${r.latencyMs} ms。保存后在 AI Chat 输入框下方选择模型。`, "ok");
+      this.showModels(this.draft.models, "检测到的模型");
+    } else {
+      this.setStatus(`连接成功 · ${r.latencyMs} ms。该服务没有返回模型列表，可在 AI Chat 的模型列表中直接输入模型 ID。`, "ok");
+      this.modelsEl.empty();
+    }
+    return true;
+  }
+
+  private showModels(models: string[], title: string): void {
+    const el = this.modelsEl;
+    el.empty();
+    el.createDiv({ cls: "ai-agent-detected-title", text: `${title} · ${models.length}` });
+    const list = el.createDiv({ cls: "ai-agent-detected-list" });
+    for (const m of models) list.createSpan({ cls: "ai-agent-detected-chip", text: m });
+  }
+
+  private async save(): Promise<void> {
+    if (!this.draft.endpoint) {
+      this.setStatus("请填写 API Endpoint。", "error");
+      return;
+    }
+    // Detect on save when the connection settings changed since the last check.
+    if (this.detectedFor !== this.signature() && !this.forceSave) {
+      const ok = await this.detect();
+      if (!ok) {
+        this.forceSave = true;
+        this.saveBtn.setButtonText("仍然保存");
+        return;
+      }
+    }
+    const cfg = this.collect();
+    await this.onSave(cfg, this.apiKey);
+    new Notice(`已保存服务商：${cfg.name}${cfg.models?.length ? `（${cfg.models.length} 个模型）` : ""}`);
+    this.close();
   }
 
   onClose(): void {
@@ -180,7 +216,7 @@ export class ProviderModal extends Modal {
   private collect(): ProviderConfig {
     const cfg = normalizeProvider({ ...this.draft, customHeaders: parseHeaderLines(this.headersText) }, 0)!;
     cfg.id = this.draft.id;
-    if (!this.draft.name.trim()) cfg.name = cfg.model;
+    if (!this.draft.name.trim()) cfg.name = defaultProviderName(cfg.presetId, cfg.endpoint);
     return cfg;
   }
 

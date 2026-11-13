@@ -8,8 +8,8 @@ import { hostOf } from "../utils/url";
 import { generateId, type TaskType } from "./settings";
 
 const TASK_LABELS: Record<TaskType, { name: string; desc: string }> = {
-  chat: { name: "对话模型", desc: "侧边栏 AI Chat 使用的模型。" },
-  editing: { name: "编辑模型", desc: "选中文本改写、润色、续写等编辑操作使用的模型。" },
+  chat: { name: "对话服务商", desc: "新建 AI Chat 会话默认使用的服务商（会话中可随时切换）。" },
+  editing: { name: "编辑服务商", desc: "选中文本改写、润色、续写等编辑操作使用的服务商，使用其在对话中最近选择的模型。" },
 };
 
 export class AIAgentSettingTab extends PluginSettingTab {
@@ -38,15 +38,15 @@ export class AIAgentSettingTab extends PluginSettingTab {
   /* ------------------------------ Providers ------------------------------ */
 
   private renderProviders(el: HTMLElement): void {
-    new Setting(el).setName("模型服务").setHeading();
+    new Setting(el).setName("服务商").setHeading();
     el.createEl("p", {
       cls: "setting-item-description",
-      text: "支持任意 OpenAI 兼容接口（OpenAI、DeepSeek、通义千问、智谱 GLM、Kimi、豆包、MiniMax、Ollama、LM Studio 等）。只需填写 Endpoint、API Key 与 Model ID。",
+      text: "支持任意 OpenAI 兼容接口（OpenAI、DeepSeek、通义千问、智谱 GLM、Kimi、豆包、MiniMax、Ollama、LM Studio 等）。只需填写 Endpoint 与 API Key，连接成功后会自动检测可用模型，在 AI Chat 输入框下方选择使用哪个模型。",
     });
 
     const { providers, defaultProviderId } = this.plugin.settings;
     if (!providers.length) {
-      el.createDiv({ cls: "ai-agent-empty", text: "尚未添加模型服务。请在下方选择服务商并点击“添加”。" });
+      el.createDiv({ cls: "ai-agent-empty", text: "尚未添加服务商。请在下方选择服务商预设并点击“添加”。" });
     }
 
     for (const p of providers) {
@@ -55,7 +55,8 @@ export class AIAgentSettingTab extends PluginSettingTab {
       const nameEl = s.nameEl;
       nameEl.setText(p.name);
       if (isDefault) nameEl.createSpan({ cls: "ai-agent-badge", text: "默认" });
-      s.setDesc(`${p.model || "（未填写模型）"} · ${hostOf(p.endpoint)}${this.plugin.keys.getKey(p) ? "" : " · 未设置 API Key"}`);
+      const models = p.models?.length ? `${p.models.length} 个模型` : "未检测到模型";
+      s.setDesc(`${hostOf(p.endpoint)} · ${models} · ${p.model ? `当前：${p.model}` : "尚未选择模型"}${this.plugin.keys.getKey(p) ? "" : " · 未设置 API Key"}`);
 
       const result = this.testResults.get(p.id);
       if (result) {
@@ -63,7 +64,7 @@ export class AIAgentSettingTab extends PluginSettingTab {
         if (result === "pending") statusEl.setText("测试中…");
         else if (result.ok) {
           statusEl.addClass("is-ok");
-          statusEl.setText(`✓ 连接正常 · ${result.latencyMs} ms`);
+          statusEl.setText(`✓ 连接正常 · ${result.models?.length ? `检测到 ${result.models.length} 个模型 · ` : ""}${result.latencyMs} ms`);
         } else {
           statusEl.addClass("is-error");
           statusEl.setText(`✗ ${result.error ?? "连接失败"}`);
@@ -74,8 +75,13 @@ export class AIAgentSettingTab extends PluginSettingTab {
         b.setButtonText("测试").onClick(async () => {
           this.testResults.set(p.id, "pending");
           this.display();
-          const r = await this.plugin.router.providerFor(p).testConnection();
+          const r = await this.plugin.router.providerFor(p).detectModels();
           this.testResults.set(p.id, r);
+          if (r.ok && r.models?.length) {
+            p.models = r.models;
+            this.plugin.models.prime(p, r.models);
+            await this.plugin.saveSettings();
+          }
           this.display();
         }),
       );
@@ -107,7 +113,7 @@ export class AIAgentSettingTab extends PluginSettingTab {
           .setTooltip("删除")
           .onClick(async () => {
             const ok = await confirmDialog(this.app, {
-              title: "删除模型配置",
+              title: "删除服务商",
               message: `确定删除“${p.name}”吗？`,
               confirmText: "删除",
               danger: true,
@@ -120,8 +126,8 @@ export class AIAgentSettingTab extends PluginSettingTab {
     }
 
     new Setting(el)
-      .setName("添加模型服务")
-      .setDesc("选择服务商预设，会自动填好 Endpoint 与推荐模型。")
+      .setName("添加服务商")
+      .setDesc("选择服务商预设，会自动填好 Endpoint。")
       .addDropdown((d) => {
         for (const preset of PROVIDER_PRESETS) d.addOption(preset.id, preset.label);
         d.setValue(this.newPresetId).onChange((v) => (this.newPresetId = v));
@@ -143,6 +149,9 @@ export class AIAgentSettingTab extends PluginSettingTab {
       else list.push(saved);
       if (!this.plugin.settings.defaultProviderId) this.plugin.settings.defaultProviderId = saved.id;
       this.testResults.delete(saved.id);
+      // Endpoint or key may have changed: use the list detected in the dialog.
+      this.plugin.models.clear();
+      if (saved.models?.length) this.plugin.models.prime(saved, saved.models);
       await this.plugin.saveSettings();
       this.display();
     }).open();
@@ -151,14 +160,14 @@ export class AIAgentSettingTab extends PluginSettingTab {
   /* ------------------------------- Routing ------------------------------- */
 
   private renderRouting(el: HTMLElement): void {
-    new Setting(el).setName("任务模型").setHeading();
+    new Setting(el).setName("任务路由").setHeading();
     const s = this.plugin.settings;
     for (const task of Object.keys(TASK_LABELS) as TaskType[]) {
       new Setting(el)
         .setName(TASK_LABELS[task].name)
         .setDesc(TASK_LABELS[task].desc)
         .addDropdown((d) => {
-          d.addOption("", "跟随默认模型");
+          d.addOption("", "跟随默认服务商");
           for (const p of s.providers) d.addOption(p.id, p.name);
           d.setValue(s.taskModels[task]).onChange(async (v) => {
             s.taskModels[task] = v;

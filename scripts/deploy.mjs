@@ -7,8 +7,8 @@
 //   OBSIDIAN_VAULT   test vault path (default: ~/Desktop/Projects/Agent-Vault)
 //   MODEL_BASE_URL   OpenAI-compatible base URL
 //   MODEL_API_KEY    API key
-//   MODEL_ID         default model id (default: DeepSeek-V4.1-Flash)
-//   MODEL_IDS        extra comma-separated model ids, saved as the provider's frequently used models
+//   MODEL_ID         optional model to preselect (otherwise the chat asks to pick one)
+//   MODEL_IDS        optional comma-separated models to list under "最近使用"
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -52,11 +52,11 @@ if (!enabled.includes(manifest.id)) {
   console.log("✓ Registered plugin in community-plugins.json");
 }
 
-if (seed) seedProviders();
+if (seed) await seedProviders();
 
 reloadInRunningObsidian();
 
-function seedProviders() {
+async function seedProviders() {
   const baseUrl = process.env.MODEL_BASE_URL;
   const apiKey = process.env.MODEL_API_KEY;
   if (!baseUrl) {
@@ -68,24 +68,35 @@ function seedProviders() {
   try { data = JSON.parse(fs.readFileSync(dataFile, "utf8")); } catch { /* first run */ }
   data.providers = Array.isArray(data.providers) ? data.providers : [];
 
-  const model = process.env.MODEL_ID || "DeepSeek-V4.1-Flash";
-  const models = (process.env.MODEL_IDS || "").split(",").map((s) => s.trim()).filter((m) => m && m !== model);
-  // One provider for the gateway; its models are picked per chat. Older seeds created one
-  // config per model (env-<model>) — fold those into the single gateway entry.
+  // Like the settings dialog: detect the models, don't ask for them.
+  const url = new URL(/^https?:/.test(baseUrl) ? baseUrl : `https://${baseUrl}`);
+  const root = url.pathname.replace(/\/+$/, "") ? url.href.replace(/\/+$/, "") : `${url.origin}/v1`;
+  let models = [];
+  try {
+    const res = await fetch(`${root}/models`, { headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {} });
+    const json = await res.json();
+    models = (json.data ?? json.models ?? []).map((m) => String(m.id ?? m.model ?? m.name ?? "")).filter(Boolean).sort();
+  } catch (e) {
+    console.warn(`! Could not detect models: ${e.message}`);
+  }
+
+  // One provider for the gateway. Older seeds created one config per model (env-<model>).
   const id = "env-gateway";
-  const host = new URL(/^https?:/.test(baseUrl) ? baseUrl : `https://${baseUrl}`).hostname;
-  const label = host.split(".").slice(-2, -1)[0] || host;
+  const host = url.hostname.split(".");
+  const label = host.length > 1 ? host[host.length - 2] : url.hostname;
   const prev = data.providers.find((p) => p.id === id);
-  const legacy = data.providers.filter((p) => p.id.startsWith("env-") && p.id !== id).map((p) => p.model);
+  const recent = (process.env.MODEL_IDS || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const model = process.env.MODEL_ID || prev?.model || "";
   const cfg = {
     id,
-    name: `${label.charAt(0).toUpperCase()}${label.slice(1)} (.env)`,
+    name: label.charAt(0).toUpperCase() + label.slice(1),
     presetId: "custom",
     protocol: "openai-compatible",
     endpoint: baseUrl,
     apiKey: apiKey || "",
     model,
-    models: [...new Set([...(prev?.models ?? []), ...legacy, ...models])].filter((m) => m !== model),
+    models,
+    recentModels: [...new Set([model, ...recent, ...(prev?.recentModels ?? [])].filter(Boolean))].slice(0, 5),
     enableStreaming: true,
     timeout: 120,
     customHeaders: {},
@@ -97,8 +108,9 @@ function seedProviders() {
   else data.providers.unshift(cfg);
   if (!data.defaultProviderId || removed.has(data.defaultProviderId)) data.defaultProviderId = id;
   for (const k of Object.keys(data.taskModels ?? {})) if (removed.has(data.taskModels[k])) data.taskModels[k] = "";
+
   fs.writeFileSync(dataFile, JSON.stringify(data, null, 2));
-  console.log(`✓ Seeded provider ${cfg.name}: ${model}${cfg.models.length ? ` (+ ${cfg.models.join(", ")})` : ""}`);
+  console.log(`✓ Seeded provider ${cfg.name}: ${models.length} model(s) detected${model ? `, current ${model}` : ""}`);
 }
 
 function reloadInRunningObsidian() {

@@ -20,10 +20,15 @@ export interface ProviderConfig {
    */
   apiKey?: string;
   apiKeySecretId?: string;
-  /** Default model for this service. */
+  /**
+   * Model currently selected for this service (picked in the chat, "" = none yet). Chat
+   * sessions remember their own choice; AI editing uses this one.
+   */
   model: string;
-  /** Extra model ids offered in the chat model picker (besides `model`). */
+  /** Models detected from the service's /models endpoint when it was configured. */
   models?: string[];
+  /** Models recently picked in the chat, newest first. */
+  recentModels?: string[];
   temperature?: number;
   maxTokens?: number;
   topP?: number;
@@ -86,6 +91,8 @@ export interface ProviderCapabilities {
 export interface ConnectionTestResult {
   ok: boolean;
   latencyMs: number;
+  /** detectModels: model ids reported by the service (empty if it has no /models endpoint). */
+  models?: string[];
   model?: string;
   sample?: string;
   error?: string;
@@ -101,6 +108,11 @@ export interface LLMProvider {
   /** Send a tiny request to verify endpoint, key and model. Never throws. */
   testConnection(signal?: AbortSignal): Promise<ConnectionTestResult>;
   listModels(signal?: AbortSignal): Promise<ModelInfo[]>;
+  /**
+   * Verify endpoint + key by listing models (no model needs to be chosen yet). Falls back to
+   * a tiny chat request when the service has no /models endpoint and a model is set. Never throws.
+   */
+  detectModels(signal?: AbortSignal): Promise<ConnectionTestResult>;
   chat(request: ChatRequest): Promise<ChatResponse>;
   /** Streams chunks; degrades to a single chunk when streaming is disabled/unsupported. */
   streamChat(request: ChatRequest): AsyncIterable<ChatChunk>;
