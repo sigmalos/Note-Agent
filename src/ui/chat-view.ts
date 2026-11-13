@@ -57,6 +57,8 @@ export class ChatView extends ItemView {
   // context state
   private useCurrentFile: boolean;
   private useSelection = true;
+  /** Also send the current note's linked notes and backlinks (SRS §4.3.3 Related Notes). */
+  private useRelated = false;
   private attachedPaths: string[] = [];
   private lastContextKey = "";
 
@@ -825,6 +827,11 @@ export class ChatView extends ItemView {
       const item = await this.plugin.context.fileItem(path);
       if (item) items.push(item);
     }
+    const snap = this.plugin.context.snapshot();
+    if (this.useRelated && snap && !this.plugin.context.isExcluded(snap.file.path)) {
+      const taken = new Set(items.map((i) => i.path));
+      for (const it of await this.plugin.context.relatedItems(snap.file.path)) if (!taken.has(it.path)) items.push(it);
+    }
     return buildContext(items, this.plugin.settings.maxContextTokens);
   }
 
@@ -839,7 +846,9 @@ export class ChatView extends ItemView {
       snap?.selection.length,
       this.useCurrentFile,
       this.useSelection,
+      this.useRelated,
       this.attachedPaths,
+      snap ? this.plugin.app.metadataCache.resolvedLinks[snap.file.path] : null,
       this.plugin.settings.excludedFolders,
     ]);
     if (!force && key === this.lastContextKey) return;
@@ -881,6 +890,18 @@ export class ChatView extends ItemView {
         this.useSelection = !this.useSelection;
         this.toggleChip(chip, this.useSelection);
       });
+    }
+    if (currentLabel && !currentExcluded && snap) {
+      const related = this.plugin.context.relatedPaths(snap.file.path);
+      if (related.length || this.useRelated) {
+        const chip = keyed("related", this.chip(bar, "git-fork", `关联笔记 · ${related.length}`, this.useRelated));
+        const names = related.map((p) => p.split("/").pop()!.replace(/\.md$/, ""));
+        chip.setAttr("aria-label", `${this.useRelated ? "附带" : "未附带"}当前笔记的出链与反向链接：\n${names.join("、") || "（无）"}\n点击切换是否发送`);
+        chip.addEventListener("click", () => {
+          this.useRelated = !this.useRelated;
+          this.toggleChip(chip, this.useRelated);
+        });
+      }
     }
     for (const path of this.attachedPaths) {
       const name = path.split("/").pop()?.replace(/\.md$/, "") ?? path;

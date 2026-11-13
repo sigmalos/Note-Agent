@@ -81,6 +81,35 @@ export class ObsidianContext {
     return { kind: "attached-file", label: file.basename, path: file.path, content: content ?? (await this.app.vault.cachedRead(file)) };
   }
 
+  /**
+   * Notes linked from and linking to `path` (SRS §4.3.2 Linked Notes / Backlinks), strongest
+   * connections first, without excluded notes.
+   */
+  relatedPaths(path: string, limit = 8): string[] {
+    const { resolvedLinks } = this.app.metadataCache;
+    const score = new Map<string, number>();
+    for (const [target, n] of Object.entries(resolvedLinks[path] ?? {})) score.set(target, (score.get(target) ?? 0) + n + 1);
+    for (const [source, targets] of Object.entries(resolvedLinks)) {
+      const n = targets[path];
+      if (n) score.set(source, (score.get(source) ?? 0) + n + 0.5);
+    }
+    score.delete(path);
+    return [...score.entries()]
+      .filter(([p]) => p.endsWith(".md") && !this.isExcluded(p))
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, limit)
+      .map(([p]) => p);
+  }
+
+  async relatedItems(path: string, limit = 8): Promise<ContextItem[]> {
+    const out: ContextItem[] = [];
+    for (const p of this.relatedPaths(path, limit)) {
+      const item = await this.fileItem(p);
+      if (item) out.push({ ...item, kind: "related-file" });
+    }
+    return out;
+  }
+
   private isAttached(view: MarkdownView): boolean {
     let found = false;
     this.app.workspace.iterateAllLeaves((leaf) => {

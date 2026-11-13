@@ -5,7 +5,7 @@ import { estimateTokens, truncateToTokens } from "./token-manager";
  * orders them by priority, enforces the token budget and renders a delimited block that
  * marks note content as untrusted data (SRS §10.3 prompt-injection defence).
  */
-export type ContextKind = "selection" | "current-file" | "attached-file";
+export type ContextKind = "selection" | "current-file" | "attached-file" | "related-file";
 
 export interface ContextItem {
   kind: ContextKind;
@@ -29,13 +29,14 @@ export interface BuiltContext {
   totalTokens: number;
 }
 
-const PRIORITY: Record<ContextKind, number> = { selection: 0, "current-file": 1, "attached-file": 2 };
+const PRIORITY: Record<ContextKind, number> = { selection: 0, "current-file": 1, "attached-file": 2, "related-file": 3 };
 const MIN_USEFUL_TOKENS = 200;
 
 export const KIND_LABEL: Record<ContextKind, string> = {
   selection: "选中文本",
   "current-file": "当前笔记",
   "attached-file": "附加笔记",
+  "related-file": "关联笔记",
 };
 
 export function buildContext(items: ContextItem[], budgetTokens: number): BuiltContext {
