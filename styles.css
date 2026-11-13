@@ -42,6 +42,7 @@
 
 /* ---------- chat view ---------- */
 .ai-agent-chat {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -551,6 +552,11 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 .ai-agent-model-picker-chevron { display: inline-flex; transition: transform 200ms var(--ai-ease); }
 .ai-agent-model-picker.is-open .ai-agent-model-picker-chevron { transform: rotate(180deg); }
 
+/* ---- popover (model picker) ---- */
+@keyframes ai-agent-popover-in { from { opacity: 0; transform: translateY(6px) scale(0.97); } to { opacity: 1; transform: none; } }
+@keyframes ai-agent-popover-out { to { opacity: 0; transform: translateY(4px) scale(0.98); } }
+.ai-agent-popover.is-closing { animation: ai-agent-popover-out 110ms ease-in both; pointer-events: none; }
+
 /* ---- modals ---- */
 .ai-agent-edit-preset { transition: transform 160ms var(--ai-ease), background-color 140ms ease, box-shadow 160ms ease; }
 .ai-agent-edit-preset:hover { transform: translateY(-1px); box-shadow: var(--shadow-s); }
@@ -573,3 +579,63 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
     transition-duration: 1ms !important;
   }
 }
+
+/* ==========================================================================
+   Popover — upward list anchored to a composer button (model picker)
+   ========================================================================== */
+.ai-agent-popover {
+  position: absolute;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.06);
+  transform-origin: left bottom;
+  animation: ai-agent-popover-in 160ms var(--ai-ease) both;
+  font-size: var(--font-ui-small);
+}
+.theme-dark .ai-agent-popover { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.3); }
+.ai-agent-popover-list { overflow-y: auto; padding: 4px; }
+.ai-agent-popover-label {
+  padding: 6px 8px 4px;
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+  color: var(--text-faint);
+  letter-spacing: 0.02em;
+}
+.ai-agent-popover-separator { height: 1px; margin: 4px 6px; background: var(--background-modifier-border); }
+.ai-agent-popover-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-s);
+  color: var(--text-normal);
+  cursor: pointer;
+  transition: background-color 100ms ease;
+}
+.ai-agent-popover-item.is-active { background: var(--background-modifier-hover); }
+.ai-agent-popover-item:active { background: var(--background-modifier-active-hover); }
+.ai-agent-popover-icon { display: inline-flex; flex: none; color: var(--text-muted); }
+.ai-agent-popover-icon svg { width: 15px; height: 15px; }
+.ai-agent-popover-item.is-checked .ai-agent-popover-icon { color: var(--interactive-accent); }
+.ai-agent-popover-text { flex: 1; min-width: 0; }
+.ai-agent-popover-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-agent-popover-item.is-checked .ai-agent-popover-title { font-weight: var(--font-semibold); }
+.ai-agent-popover-subtitle {
+  margin-top: 1px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-agent-popover-subtitle.is-warning { color: var(--color-orange); }
+.ai-agent-popover-check { display: inline-flex; flex: none; width: 16px; color: var(--interactive-accent); }
+.ai-agent-popover-check svg { width: 15px; height: 15px; }
+.ai-agent-popover-item.is-checked .ai-agent-popover-check svg { animation: ai-agent-pop 300ms var(--ai-spring); }
+.ai-agent-model-picker.is-bump { animation: ai-agent-bump 240ms var(--ai-ease); }

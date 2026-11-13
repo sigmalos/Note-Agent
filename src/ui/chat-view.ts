@@ -10,9 +10,11 @@ import type AIAgentPlugin from "../main";
 import { confirmDialog } from "./components/confirm-modal";
 import { NoteSuggestModal } from "./components/note-suggest-modal";
 import { animateOut, flash, prefersReducedMotion } from "./components/motion";
+import { Popover, type PopoverEntry } from "./components/popover";
 import { promptText } from "./components/text-input-modal";
 import { ContextViewerModal } from "./context-viewer-modal";
 import { SessionListModal } from "./session-list-modal";
+import { hostOf } from "../utils/url";
 
 /** Open a menu at the click point, or above the button when triggered from the keyboard. */
 function showMenuFor(menu: Menu, anchor: HTMLElement, evt: MouseEvent): void {
@@ -71,6 +73,7 @@ export class ChatView extends ItemView {
   private chipKeys = new Set<string>();
   private sendBusy: boolean | null = null;
   private composerEl!: HTMLElement;
+  private modelPopover!: Popover;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -106,6 +109,7 @@ export class ChatView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    this.modelPopover?.close();
     this.controller?.stop();
     for (const r of this.rendered.values()) r.component.unload();
     this.rendered.clear();
@@ -222,11 +226,19 @@ export class ChatView extends ItemView {
     const footer = composer.createDiv({ cls: "ai-agent-composer-footer" });
     this.iconButton(footer, "plus", "添加笔记作为上下文", () => this.pickNote()).addClass("ai-agent-add-note");
     this.iconButton(footer, "sparkles", "快捷提示词", (evt) => this.openQuickPrompts(evt));
-    // A button + Obsidian Menu instead of a native <select>: on macOS the native popup opens on
-    // mousedown, the same moment Obsidian activates the sidebar leaf, and it closed right away.
-    // The menu opens on click, after the leaf switch is done.
-    this.modelPicker = footer.createEl("button", { cls: "ai-agent-model-picker", attr: { "aria-label": "选择模型", "aria-haspopup": "menu" } });
-    this.modelPicker.addEventListener("click", (evt) => this.openModelMenu(evt));
+    // A button + plugin popover instead of a native <select> or Obsidian Menu: the native
+    // popup closed instantly when the sidebar leaf activated on mousedown, and Obsidian's Menu
+    // renders as a native macOS menu. The popover opens upwards, anchored above the picker.
+    this.modelPicker = footer.createEl("button", {
+      cls: "ai-agent-model-picker",
+      attr: { "aria-label": "选择模型", "aria-haspopup": "listbox", "aria-expanded": "false" },
+    });
+    this.modelPopover = new Popover(this.app, this.modelPicker, this.contentEl, {
+      cls: "ai-agent-model-popover",
+      minWidth: 260,
+      focusAfter: () => this.inputEl,
+    });
+    this.modelPicker.addEventListener("click", () => this.modelPopover.toggle(this.modelEntries()));
     footer.createDiv({ cls: "ai-agent-spacer" });
     this.sendBtn = footer.createEl("button", { cls: "mod-cta ai-agent-send" });
     this.sendBtn.addEventListener("click", () => void this.onSendClick());
@@ -345,7 +357,7 @@ export class ChatView extends ItemView {
     this.modelPicker.empty();
     setIcon(this.modelPicker.createSpan({ cls: "ai-agent-model-picker-icon" }), "cpu");
     this.modelPicker.createSpan({ cls: "ai-agent-model-picker-label", text: label });
-    setIcon(this.modelPicker.createSpan({ cls: "ai-agent-model-picker-chevron" }), "chevron-down");
+    setIcon(this.modelPicker.createSpan({ cls: "ai-agent-model-picker-chevron" }), "chevron-up");
     this.modelPicker.setAttr("aria-label", `选择模型（当前：${label}）`);
   }
 
@@ -357,38 +369,40 @@ export class ChatView extends ItemView {
     }
   }
 
-  private openModelMenu(evt: MouseEvent): void {
+  private modelEntries(): PopoverEntry[] {
     const s = this.plugin.settings;
-    const menu = new Menu();
     const choose = async (id: string) => {
       if (this.session.providerId === id) return;
       this.session.providerId = id;
       this.refreshModels();
+      flash(this.modelPicker, "is-bump");
       if (this.session.messages.length) await this.plugin.sessions.save(this.session);
     };
-    menu.addItem((item) =>
-      item
-        .setTitle(`默认 · ${this.defaultModelName()}`)
-        .setIcon("star")
-        .setChecked(!this.session.providerId)
-        .onClick(() => void choose("")),
-    );
-    if (s.providers.length) menu.addSeparator();
+    const entries: PopoverEntry[] = [{ type: "label", text: "对话模型" }];
+    entries.push({
+      id: "",
+      icon: "star",
+      title: "默认模型",
+      subtitle: `跟随设置 · ${this.defaultModelName()}`,
+      checked: !this.session.providerId,
+      onSelect: () => void choose(""),
+    });
+    if (s.providers.length) entries.push({ type: "separator" });
     for (const p of s.providers) {
-      menu.addItem((item) =>
-        item
-          .setTitle(p.name)
-          .setIcon("cpu")
-          .setChecked(this.session.providerId === p.id)
-          .onClick(() => void choose(p.id)),
-      );
+      const missingKey = !this.plugin.keys.getKey(p);
+      entries.push({
+        id: p.id,
+        icon: "cpu",
+        title: p.name,
+        subtitle: missingKey ? `${p.model} · 未设置 API Key` : `${p.model} · ${hostOf(p.endpoint)}`,
+        warn: missingKey,
+        checked: this.session.providerId === p.id,
+        onSelect: () => void choose(p.id),
+      });
     }
-    menu.addSeparator();
-    menu.addItem((item) => item.setTitle("管理模型…").setIcon("settings").onClick(() => this.plugin.openSettings()));
-
-    this.modelPicker.addClass("is-open");
-    menu.onHide(() => this.modelPicker.removeClass("is-open"));
-    showMenuFor(menu, this.modelPicker, evt);
+    entries.push({ type: "separator" });
+    entries.push({ id: "manage", icon: "settings", title: "管理模型…", onSelect: () => this.plugin.openSettings() });
+    return entries;
   }
 
   /* ------------------------------- sessions ------------------------------ */

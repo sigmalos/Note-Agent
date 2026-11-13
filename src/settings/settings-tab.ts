@@ -4,6 +4,7 @@ import type { ConnectionTestResult, ProviderConfig } from "../providers/base/pro
 import { PROVIDER_PRESETS, newProviderConfig } from "../providers/presets";
 import { confirmDialog } from "../ui/components/confirm-modal";
 import { ProviderModal } from "./provider-modal";
+import { hostOf } from "../utils/url";
 import { generateId, type TaskType } from "./settings";
 
 const TASK_LABELS: Record<TaskType, { name: string; desc: string }> = {
@@ -281,13 +282,5 @@ export class AIAgentSettingTab extends PluginSettingTab {
     if (!this.plugin.keys.secure) {
       new Notice("当前 Obsidian 版本不支持 SecretStorage，API Key 将保存在插件配置文件中。");
     }
-  }
-}
-
-function hostOf(endpoint: string): string {
-  try {
-    return new URL(/^https?:/i.test(endpoint) ? endpoint : `https://${endpoint}`).host;
-  } catch {
-    return endpoint || "（未填写 Endpoint）";
   }
 }
