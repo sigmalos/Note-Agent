@@ -3,6 +3,8 @@ import { windowAround } from "../core/token-manager";
 import type { EditAction } from "../core/prompt-manager";
 import type AIAgentPlugin from "../main";
 import { DiffPreviewModal } from "../ui/diff-modal";
+import { promptText } from "../ui/components/text-input-modal";
+import { editAction, usesVariable } from "../prompts/custom-prompts";
 import { EditPromptModal } from "../ui/edit-modal";
 import { EditSession, type EditTask } from "./edit-session";
 import { appendText, findTarget } from "../chat/note-edits";
@@ -41,9 +43,34 @@ export class EditManager {
   promptAndRun(editor: Editor, view: MarkdownView): void {
     if (!view.file) return;
     const selection = editor.getSelection();
-    new EditPromptModal(this.plugin.app, selection, view.file.basename, (action) => {
-      if (action) this.run(action, editor, view);
-    }).open();
+    const hasSelection = selection.trim().length > 0;
+    const prompts = this.plugin.prompts;
+    const custom = prompts
+      .forEdit()
+      .filter((p) => hasSelection || p.mode === "insert-at-cursor" || !usesVariable(p, "selection"))
+      .map((p) => ({
+        label: p.name,
+        icon: p.icon,
+        description: p.description || p.body.slice(0, 80),
+        choose: async () => {
+          let userInstruction: string | undefined;
+          if (usesVariable(p, "user_instruction")) {
+            const v = await promptText(this.plugin.app, { title: p.name, placeholder: "补充说明" });
+            if (v === null) return null;
+            userInstruction = v;
+          }
+          return editAction(p, prompts.values({ userInstruction }), hasSelection);
+        },
+      }));
+    new EditPromptModal(
+      this.plugin.app,
+      selection,
+      view.file.basename,
+      (action) => {
+        if (action) this.run(action, editor, view);
+      },
+      custom,
+    ).open();
   }
 
   run(action: EditAction, editor: Editor, view: MarkdownView): void {
@@ -89,8 +116,11 @@ export class EditManager {
     let modal: DiffPreviewModal | null = null;
     const session = new EditSession(task, {
       getProvider: () => {
-        const cfg = this.plugin.router.resolveConfig("editing");
-        return { provider: this.plugin.router.providerFor(cfg), modelName: cfg.model };
+        // Custom prompts may name a provider (by name or id) and a model.
+        const hint = action.providerHint?.trim().toLowerCase();
+        const hinted = hint ? this.plugin.settings.providers.find((p) => p.id.toLowerCase() === hint || p.name.toLowerCase() === hint) : undefined;
+        const cfg = this.plugin.router.resolveConfig("editing", hinted?.id);
+        return { provider: this.plugin.router.providerFor(cfg), modelName: action.modelHint || cfg.model };
       },
       language: this.plugin.settings.translateTargetLanguage,
       // For "continue writing" with a selection, the selection is part of the preceding text.

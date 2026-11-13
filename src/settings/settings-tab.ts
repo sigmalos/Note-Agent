@@ -32,6 +32,7 @@ export class AIAgentSettingTab extends PluginSettingTab {
     this.renderProviders(containerEl);
     this.renderRouting(containerEl);
     this.renderChatAndContext(containerEl);
+    this.renderPrompts(containerEl);
     this.renderAgent(containerEl);
     this.renderEditing(containerEl);
     this.renderCompletion(containerEl);
@@ -248,6 +249,49 @@ export class AIAgentSettingTab extends PluginSettingTab {
   }
 
   /* ------------------------------- Editing ------------------------------- */
+
+  private renderPrompts(el: HTMLElement): void {
+    const s = this.plugin.settings;
+    const svc = this.plugin.prompts;
+    new Setting(el).setName("提示词").setHeading();
+    new Setting(el)
+      .setName("提示词文件夹")
+      .setDesc(
+        "该文件夹中的每篇笔记都是一个提示词：正文是提示词内容，属性 scope 决定用于对话、AI 编辑或作为对话的默认角色。支持变量 {{selection}} {{current_file}} {{cursor_context}} {{vault_context}} {{user_instruction}} {{date}} {{title}} {{language}}。每个提示词都会注册为命令，可在“快捷键”中绑定。",
+      )
+      .addText((t) =>
+        t.setPlaceholder("AI Prompts").setValue(s.promptFolder).onChange(async (v) => {
+          s.promptFolder = v.trim().replace(/^\/+|\/+$/g, "") || "AI Prompts";
+          await this.plugin.saveSettings();
+          await svc.reload();
+        }),
+      )
+      .addButton((b) => b.setButtonText("新建提示词").onClick(() => void svc.createPrompt()));
+
+    const SCOPE: Record<string, string> = { chat: "对话", edit: "AI 编辑", both: "对话 · AI 编辑", system: "默认角色" };
+    if (!svc.prompts.length) {
+      el.createDiv({ cls: "ai-agent-empty", text: `「${svc.folder}」中还没有提示词。` });
+    }
+    for (const p of svc.prompts) {
+      new Setting(el)
+        .setName(p.name)
+        .setDesc(`${SCOPE[p.scope]}${p.model ? ` · ${p.model}` : ""} · ${p.description || p.body.replace(/\s+/g, " ").slice(0, 60)}`)
+        .setClass("ai-agent-prompt-row")
+        .addExtraButton((b) => b.setIcon("pencil").setTooltip("打开编辑").onClick(() => svc.openPrompt(p)));
+    }
+
+    new Setting(el)
+      .setName("对话默认角色")
+      .setDesc("把一个 scope: system 的提示词附加到 AI Chat 的系统提示词中，作为固定的角色或写作要求。")
+      .addDropdown((d) => {
+        d.addOption("", "无（内置通用助手）");
+        for (const p of svc.personas()) d.addOption(p.path, p.name);
+        d.setValue(svc.personas().some((p) => p.path === s.chatPersonaPath) ? s.chatPersonaPath : "").onChange(async (v) => {
+          s.chatPersonaPath = v;
+          await this.plugin.saveSettings();
+        });
+      });
+  }
 
   private renderAgent(el: HTMLElement): void {
     const s = this.plugin.settings;

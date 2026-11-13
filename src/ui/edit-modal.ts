@@ -1,5 +1,6 @@
-import { App, Modal, setIcon } from "obsidian";
+import { App, Modal } from "obsidian";
 import { EDIT_ACTIONS, customAction, type EditAction } from "../core/prompt-manager";
+import { setIconAny } from "./components/icons";
 
 /**
  * "AI Edit" popup (SRS §5.1.2): pick a preset action or type a custom instruction.
@@ -14,6 +15,8 @@ export class EditPromptModal extends Modal {
     private readonly selectedText: string,
     private readonly fileName: string,
     private readonly onChoose: (action: EditAction | null) => void,
+    /** User prompt notes shown after the presets; resolve to an action (may ask for input). */
+    private readonly custom: Array<{ label: string; icon: string; description: string; choose: () => Promise<EditAction | null> }> = [],
   ) {
     super(app);
   }
@@ -36,9 +39,23 @@ export class EditPromptModal extends Modal {
     const presets = el.createDiv({ cls: "ai-agent-edit-presets" });
     for (const action of EDIT_ACTIONS.filter((a) => hasSelection || !a.needsSelection)) {
       const b = presets.createEl("button", { cls: "ai-agent-edit-preset", attr: { "aria-label": action.description } });
-      setIcon(b.createSpan(), action.icon);
+      setIconAny(b.createSpan(), [action.icon, "wand"]);
       b.createSpan({ text: action.label });
       b.addEventListener("click", () => this.choose(action));
+    }
+
+    if (this.custom.length) {
+      el.createDiv({ cls: "ai-agent-edit-section", text: "我的提示词" });
+      const mine = el.createDiv({ cls: "ai-agent-edit-presets" });
+      for (const c of this.custom) {
+        const b = mine.createEl("button", { cls: "ai-agent-edit-preset", attr: { "aria-label": c.description } });
+        setIconAny(b.createSpan(), [c.icon, "scroll-text"]);
+        b.createSpan({ text: c.label });
+        b.addEventListener("click", async () => {
+          const action = await c.choose();
+          if (action) this.choose(action);
+        });
+      }
     }
 
     this.input = el.createEl("textarea", {

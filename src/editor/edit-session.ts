@@ -148,6 +148,7 @@ export class EditSession {
           { role: "system", content: EDIT_SYSTEM_PROMPT },
           { role: "user", content: user },
         ],
+        model: modelName,
         signal: this.abort.signal,
       });
       for await (const chunk of stream) {

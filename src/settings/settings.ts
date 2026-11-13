@@ -37,6 +37,11 @@ export interface PluginSettings {
   completionMaxChars: number;
   /** Model id for completion ("" = the completion provider's current model). */
   completionModel: string;
+
+  /** Folder holding custom prompt notes (SRS §4.8.4). */
+  promptFolder: string;
+  /** Prompt note (scope: system) appended to the chat system prompt; "" = none. */
+  chatPersonaPath: string;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -58,6 +63,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   completionDelayMs: 800,
   completionMaxChars: 200,
   completionModel: "",
+  promptFolder: "AI Prompts",
+  chatPersonaPath: "",
 };
 
 const num = (v: unknown, fallback: number | undefined, min?: number, max?: number): number | undefined => {
@@ -156,6 +163,9 @@ export function normalizeSettings(raw: unknown): PluginSettings {
     completionDelayMs: num(r.completionDelayMs, DEFAULT_SETTINGS.completionDelayMs, 200, 5000)!,
     completionMaxChars: num(r.completionMaxChars, DEFAULT_SETTINGS.completionMaxChars, 20, 2000)!,
     completionModel: typeof r.completionModel === "string" ? r.completionModel.trim() : "",
+    promptFolder:
+      typeof r.promptFolder === "string" && r.promptFolder.trim() ? r.promptFolder.trim().replace(/^\/+|\/+$/g, "") : DEFAULT_SETTINGS.promptFolder,
+    chatPersonaPath: typeof r.chatPersonaPath === "string" ? r.chatPersonaPath : "",
   };
 }
 

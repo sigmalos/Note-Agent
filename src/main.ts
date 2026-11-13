@@ -8,6 +8,7 @@ import { createFetchTransport, createNodeTransport, type HttpTransport } from ".
 import { LLMRouter } from "./core/llm-router";
 import { EDIT_ACTIONS, type EditAction } from "./core/prompt-manager";
 import { CompletionService } from "./editor/completion-service";
+import { PromptService } from "./prompts/prompt-service";
 import { EditManager } from "./editor/edit-manager";
 import { KeyStore, type SecretStorageLike } from "./settings/key-store";
 import { AIAgentSettingTab } from "./settings/settings-tab";
@@ -29,6 +30,7 @@ export default class AIAgentPlugin extends Plugin {
   /** "providerId|model" pairs that rejected function tools (this app session). */
   toolsUnsupported = new Set<string>();
   completion!: CompletionService;
+  prompts!: PromptService;
   private transports: Partial<Record<"node" | "fetch", HttpTransport>> = {};
 
   async onload(): Promise<void> {
@@ -52,6 +54,7 @@ export default class AIAgentPlugin extends Plugin {
     this.registerChatCommands();
     this.registerEditCommands();
     this.completion = new CompletionService(this);
+    this.prompts = new PromptService(this);
     this.addSettingTab(new AIAgentSettingTab(this.app, this));
     logger.info(`loaded (${this.settings.providers.length} model config(s))`);
   }

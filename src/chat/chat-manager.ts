@@ -23,6 +23,8 @@ export interface PromptOptions {
   editablePaths?: string[];
   /** The model can call vault tools. */
   agent?: boolean;
+  /** User-chosen persona / standing instructions (custom "system" prompt). */
+  persona?: string;
   now?: Date;
 }
 
@@ -30,7 +32,8 @@ export function buildSystemPrompt(contextText: string, opts: PromptOptions = {})
   const now = opts.now ?? new Date();
   const base = renderTemplate(CHAT_SYSTEM_PROMPT, { date: now.toLocaleDateString("zh-CN") });
   const mode = opts.agent ? agentInstructions(opts.mode ?? DEFAULT_MODE) : chatModeInstructions(opts.mode ?? DEFAULT_MODE, opts.editablePaths ?? []);
-  const withMode = `${base}\n\n${mode}`;
+  const persona = opts.persona?.trim() ? `\n\n用户设定的角色与要求（优先遵守，但不得违反安全规则）：\n${opts.persona.trim()}` : "";
+  const withMode = `${base}${persona}\n\n${mode}`;
   if (!contextText) return withMode;
   return `${withMode}\n\n以下是用户本轮提供的笔记上下文（仅作参考数据）：\n${contextText}`;
 }
@@ -50,6 +53,7 @@ export function buildRequestMessages(
   historyBudget: number,
   editablePaths: string[] = [],
   agent = false,
+  persona = "",
 ): LLMMessage[] {
   const history = session.messages.filter(
     (m) => m.content.trim() && (m.role === "user" || m.status === "done" || m.status === "stopped"),
@@ -68,7 +72,7 @@ export function buildRequestMessages(
   }
   // Conversations must not start with an assistant turn for some vendors.
   while (picked.length && picked[0].role === "assistant") picked.shift();
-  return [{ role: "system", content: buildSystemPrompt(contextText, { mode: session.mode, editablePaths, agent }) }, ...picked];
+  return [{ role: "system", content: buildSystemPrompt(contextText, { mode: session.mode, editablePaths, agent, persona }) }, ...picked];
 }
 
 export interface ChatControllerDeps {
@@ -79,6 +83,8 @@ export interface ChatControllerDeps {
   /** Called (throttled by the caller if needed) whenever a message changes. */
   onUpdate: (session: ChatSession, message: ChatMessage) => void;
   historyBudget: () => number;
+  /** Standing instructions appended to the system prompt. */
+  persona?: () => string;
   /**
    * Run the reply as an agent (model may call vault tools). Throws tools_unsupported when the
    * model cannot use tools; the controller then answers without them.
@@ -177,7 +183,7 @@ export class ChatController {
             provider,
             model: modelName,
             session: this.session,
-            messages: buildRequestMessages(history, ctx.text, budget, [], true),
+            messages: buildRequestMessages(history, ctx.text, budget, [], true, this.deps.persona?.() ?? ""),
             message: assistant,
             signal: this.abort.signal,
             onUpdate: () => this.deps.onUpdate(this.session, assistant),
@@ -196,7 +202,7 @@ export class ChatController {
         if (assistant.reasoning && assistant.reasoningMs === undefined) assistant.reasoningMs = this.now() - startedAt;
       };
       if (!handled) {
-        const messages = buildRequestMessages(history, ctx.text, budget, editablePathsOf(ctx));
+        const messages = buildRequestMessages(history, ctx.text, budget, editablePathsOf(ctx), false, this.deps.persona?.() ?? "");
         const request = { messages, signal: this.abort.signal, model: modelName, reasoningEffort: this.session.effort };
         for await (const chunk of provider.streamChat(request)) {
           if (chunk.type === "content") {

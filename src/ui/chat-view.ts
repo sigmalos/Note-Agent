@@ -24,6 +24,7 @@ import { ContextViewerModal } from "./context-viewer-modal";
 import { SessionListModal } from "./session-list-modal";
 import type { ProviderConfig } from "../providers/base/provider.types";
 import { rememberModel } from "../settings/settings";
+import { chatText, type CustomPrompt } from "../prompts/custom-prompts";
 import { hostOf } from "../utils/url";
 
 /** A composer button that opens an upward list. */
@@ -270,6 +271,8 @@ export class ChatView extends ItemView {
       cls: "ai-agent-prompts-popover",
       minWidth: 280,
       maxWidth: 380,
+      maxHeight: 460,
+      search: { placeholder: "搜索提示词…", minItems: 12 },
     });
     this.promptsPicker.btn.className = "clickable-icon ai-agent-prompts-btn";
     setIcon(this.promptsPicker.btn, "sparkles");
@@ -629,7 +632,7 @@ export class ChatView extends ItemView {
 
   private quickPromptEntries(): PopoverEntry[] {
     const needsLabel = { "current-file": "当前笔记", selection: "选中文本" } as const;
-    return [
+    const entries: PopoverEntry[] = [
       { type: "label", text: "快捷提示词" },
       ...QUICK_PROMPTS.map(
         (qp): PopoverEntry => ({
@@ -642,6 +645,42 @@ export class ChatView extends ItemView {
         }),
       ),
     ];
+    const mine = this.plugin.prompts.forChat();
+    entries.push({ type: "label", text: `我的提示词${mine.length ? ` · ${mine.length}` : ""}` });
+    for (const p of mine) {
+      entries.push({
+        id: `prompt:${p.path}`,
+        icon: [p.icon, "scroll-text"],
+        title: p.name,
+        subtitle: p.description || p.body.replace(/\s+/g, " ").slice(0, 80),
+        keywords: p.body,
+        onSelect: () => this.applyCustomPrompt(p, false),
+      });
+    }
+    entries.push({
+      id: "new-prompt",
+      icon: "plus",
+      title: "新建提示词…",
+      subtitle: `保存在「${this.plugin.prompts.folder}」文件夹中的 Markdown 笔记`,
+      onSelect: () => void this.plugin.prompts.createPrompt(),
+    });
+    return entries;
+  }
+
+  /** Put a custom prompt into the input (and send it right away when `send`). */
+  applyCustomPrompt(p: CustomPrompt, send: boolean): void {
+    const { text, cursor, needs } = chatText(p, this.plugin.prompts.values());
+    if (needs === "current-file") this.useCurrentFile = true;
+    if (needs === "selection") this.useSelection = true;
+    this.refreshContextBar(true);
+    if (send && !this.controller.busy) {
+      void this.sendPrompt(text);
+      return;
+    }
+    this.inputEl.value = text;
+    flash(this.composerEl, "is-flash");
+    this.inputEl.focus();
+    this.inputEl.setSelectionRange(cursor, cursor);
   }
 
   /* ------------------------------- sessions ------------------------------ */
@@ -659,6 +698,7 @@ export class ChatView extends ItemView {
       onUpdate: (sess, msg) => this.onMessageUpdate(sess, msg),
       historyBudget: () => Math.max(2000, Math.floor(this.plugin.settings.maxContextTokens / 2)),
       afterReply: (sess, msg) => this.afterReply(sess, msg),
+      persona: () => this.plugin.prompts.personaText(),
       runAgent: (req) => this.runAgent(req),
       useTools: (providerId, model) => this.plugin.settings.agentTools && !this.plugin.toolsUnsupported.has(`${providerId}|${model}`),
       onToolsUnsupported: (providerId, model) => {

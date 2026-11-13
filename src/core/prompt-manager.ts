@@ -112,6 +112,9 @@ export interface EditAction {
   needsSelection: boolean;
   /** Task text sent to the model. */
   instruction: string;
+  /** Custom prompts: preferred provider (name or id) and model. */
+  providerHint?: string;
+  modelHint?: string;
 }
 
 export const EDIT_ACTIONS: EditAction[] = [
@@ -188,6 +191,60 @@ export const EDIT_ACTIONS: EditAction[] = [
     needsSelection: false,
     instruction:
       "根据上文自然地继续往下写一段（约 100–300 字），风格、语气、格式与上文保持一致，不要重复已有内容。只输出新增的续写内容。",
+  },
+  {
+    id: "change-tone",
+    label: "改变语气",
+    icon: "drama",
+    description: "改写为更正式、专业的书面语气",
+    mode: "replace",
+    needsSelection: true,
+    instruction: "把选中文本改写为正式、专业的书面语气：用词准确克制，去掉口语化表达，保留原意、事实与 Markdown 结构。",
+  },
+  {
+    id: "explain",
+    label: "解释",
+    icon: "lightbulb",
+    description: "在选中内容之后插入通俗的解释",
+    mode: "insert-after",
+    needsSelection: true,
+    instruction: "用通俗易懂的语言解释选中的内容（概念、术语或代码），必要时举一个简短的例子。以一个 Markdown 引用块（> 开头）输出，便于和原文区分。",
+  },
+  {
+    id: "outline",
+    label: "生成大纲",
+    icon: "list-tree",
+    description: "为选中内容生成层次化大纲，插入到其后",
+    mode: "insert-after",
+    needsSelection: true,
+    instruction: "为选中内容生成层次清晰的大纲，使用 Markdown 嵌套无序列表，每项一句话以内。",
+  },
+  {
+    id: "to-table",
+    label: "转为表格",
+    icon: "table",
+    description: "把选中的列表或段落整理成 Markdown 表格",
+    mode: "replace",
+    needsSelection: true,
+    instruction: "把选中的内容整理成一个 Markdown 表格：自行确定合适的列，信息不丢失，不编造原文没有的数据。只输出表格本身。",
+  },
+  {
+    id: "convert-format",
+    label: "整理格式",
+    icon: "pilcrow",
+    description: "修正选中内容的 Markdown 格式（标题、列表、代码块、空行）",
+    mode: "replace",
+    needsSelection: true,
+    instruction: "整理选中内容的 Markdown 格式：统一标题层级与列表缩进、为代码块补充语言标注、修正多余或缺少的空行、规范中英文之间的空格。不要改动文字内容。",
+  },
+  {
+    id: "keywords",
+    label: "提取关键词",
+    icon: "tags",
+    description: "提取 3–8 个关键词并以 #标签 形式插入到其后",
+    mode: "insert-after",
+    needsSelection: true,
+    instruction: "从选中内容中提取 3–8 个最能代表主题的关键词，输出为一行 Obsidian 标签（例如 #RAG #向量数据库），标签中不要有空格。只输出这一行。",
   },
 ];
 

@@ -1018,3 +1018,4 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 .ai-agent-completion-icon { display: inline-flex; }
 .ai-agent-completion-icon svg { width: 12px; height: 12px; }
 .ai-agent-completion-status.is-loading .ai-agent-completion-icon svg { animation: ai-agent-spin 900ms linear infinite; }
+.ai-agent-edit-section { margin: var(--size-4-3) 0 var(--size-2-2); font-size: var(--font-ui-smaller); font-weight: var(--font-semibold); color: var(--text-faint); }
