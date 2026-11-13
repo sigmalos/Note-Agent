@@ -51,7 +51,7 @@ const NOTE_EDIT_FORMAT = `需要修改笔记时，在回答中输出修改块（
 /** Instructions when the model can call vault tools (agent mode). */
 export function agentInstructions(mode: ChatModeId): string {
   const common = `你可以调用工具访问用户的 Obsidian 仓库：
-- 用户询问笔记里记录过什么、某个主题的资料等，先用 search_vault 搜索，再用 read_file 阅读相关笔记，然后基于笔记内容回答，并用 [[笔记名]] 标注来源；不要编造不存在的笔记或路径。
+- 用户询问笔记里记录过什么、某个主题的资料等，先搜索（关键词明确时用 search_vault；问题较抽象、关键词不确定时用 semantic_search，如果可用），再用 read_file 阅读相关笔记，然后基于笔记内容回答，并用 [[笔记名]] 标注来源；不要编造不存在的笔记或路径。
 - 已经在 <context> 中提供的笔记无需再次读取。
 - 多步骤任务（例如整理多篇笔记、生成综述）开始时先调用 update_plan 列出计划，之后在执行下一步工具的同一轮中顺带更新计划状态。简单问题直接回答，不需要计划。
 - 可以在一轮中同时调用多个工具（例如一次读取多篇笔记、同时更新计划），以减少往返次数。

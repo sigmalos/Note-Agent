@@ -320,6 +320,18 @@ describe.each(transports)("OpenAICompatibleProvider over %s transport", (_name, 
     expect(await noModel.detectModels()).toMatchObject({ ok: false });
   });
 
+  it("returns embeddings in input order", async () => {
+    handler = (_req, body, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ data: body.input.map((_: string, i: number) => ({ index: body.input.length - 1 - i, embedding: [body.input.length - 1 - i, 1] })).reverse() }));
+    };
+    const p = new OpenAICompatibleProvider(cfg(), makeTransport());
+    const r = await p.embed({ model: "emb", input: ["a", "b", "c"] });
+    expect(r.vectors).toEqual([[0, 1], [1, 1], [2, 1]]);
+    expect(requests[requests.length - 1]).toMatchObject({ url: "/v1/embeddings", body: { model: "emb", input: ["a", "b", "c"] } });
+    await expect(p.embed({ model: "", input: ["a"] })).rejects.toMatchObject({ kind: "config" });
+  });
+
   it("rejects incomplete configs before sending anything", async () => {
     const p = new OpenAICompatibleProvider(cfg({ model: "" }), makeTransport());
     await expect(p.chat({ messages: [] })).rejects.toMatchObject({ kind: "config" });

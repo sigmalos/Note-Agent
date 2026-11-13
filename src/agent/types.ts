@@ -60,10 +60,20 @@ export interface ToolResult {
   paths?: string[];
 }
 
+export interface SemanticHit {
+  path: string;
+  heading: string;
+  text: string;
+  score: number;
+}
+
 export interface ToolContext {
   port: VaultPort;
   /** Character cap for file contents returned to the model. */
   maxReadChars: number;
+  /** Vector search over the vault, when semantic search is enabled. */
+  semantic?: (query: string, opts: { folder?: string; topK?: number; signal?: AbortSignal }) => Promise<SemanticHit[]>;
+  signal?: AbortSignal;
 }
 
 export interface AgentTool<I = Record<string, unknown>> {

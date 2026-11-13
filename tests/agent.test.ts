@@ -72,6 +72,18 @@ describe("tools", () => {
     expect(list.folders).toEqual(["AI", "日记"]);
   });
 
+  it("semantic search uses the injected retriever", async () => {
+    const v = vault();
+    const tool = toolByName("semantic_search")!;
+    expect((await tool.run!({ query: "x" }, ctx(v))).ok).toBe(false);
+    const r = await tool.run!({ query: "如何检索", top_k: 2 }, {
+      ...ctx(v),
+      semantic: async (q, o) => [{ path: "AI/RAG技术架构.md", heading: "RAG 技术架构", text: `${q}/${o.topK}`, score: 0.876 }],
+    });
+    expect(r.paths).toEqual(["AI/RAG技术架构.md"]);
+    expect(JSON.parse(r.output).results[0]).toEqual({ path: "AI/RAG技术架构.md", section: "RAG 技术架构", similarity: 0.88, text: "如何检索/2" });
+  });
+
   it("reads long notes in pages", async () => {
     const v = new MemVault({ "long.md": "x".repeat(2500) });
     const first = JSON.parse((await toolByName("read_file")!.run!({ path: "long.md" }, ctx(v))).output);
@@ -99,7 +111,9 @@ describe("tools", () => {
 
   it("offers read tools only in Ask mode", () => {
     expect(toolsForMode("ask").map((t) => t.permission)).not.toContain("write");
-    expect(toolsForMode("auto").length).toBe(TOOLS.length + 1);
+    expect(toolsForMode("auto").length).toBe(TOOLS.length);
+    expect(toolsForMode("auto", { semantic: true }).length).toBe(TOOLS.length + 1);
+    expect(toolsForMode("ask").map((t) => t.name)).not.toContain("semantic_search");
   });
 });
 

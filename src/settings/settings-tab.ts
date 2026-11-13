@@ -11,6 +11,7 @@ const TASK_LABELS: Record<TaskType, { name: string; desc: string }> = {
   chat: { name: "对话服务商", desc: "新建 AI Chat 会话默认使用的服务商（会话中可随时切换）。" },
   editing: { name: "编辑服务商", desc: "选中文本改写、润色、续写等编辑操作使用的服务商，使用其在对话中最近选择的模型。" },
   completion: { name: "补全服务商", desc: "行内补全使用的服务商；模型在下方“行内补全”中设置。" },
+  embedding: { name: "Embedding 服务商", desc: "语义检索使用的服务商；模型在下方“语义检索”中设置。" },
 };
 
 export class AIAgentSettingTab extends PluginSettingTab {
@@ -36,6 +37,7 @@ export class AIAgentSettingTab extends PluginSettingTab {
     this.renderAgent(containerEl);
     this.renderEditing(containerEl);
     this.renderCompletion(containerEl);
+    this.renderRag(containerEl);
     this.renderAdvanced(containerEl);
   }
 
@@ -372,6 +374,107 @@ export class AIAgentSettingTab extends PluginSettingTab {
         });
     numeric("触发延迟（毫秒）", "停止输入多久后请求补全（200–5000）。", "completionDelayMs", 200, 5000);
     numeric("最大补全长度（字）", "单次建议的最大字数（20–2000）。", "completionMaxChars", 20, 2000);
+  }
+
+  private renderRag(el: HTMLElement): void {
+    const s = this.plugin.settings;
+    const rag = this.plugin.rag;
+    new Setting(el).setName("语义检索（RAG）").setHeading();
+    new Setting(el)
+      .setName("启用语义检索")
+      .setDesc("把笔记切分成片段并调用 Embedding 模型生成向量，索引保存在本地插件目录中。启用后 Agent 可以按语义搜索笔记（semantic_search），比关键词搜索更能找到“意思相近”的内容。首次索引会把所有未排除的笔记片段发送给 Embedding 服务。")
+      .addToggle((t) =>
+        t.setValue(s.ragEnabled).onChange(async (v) => {
+          s.ragEnabled = v;
+          await this.plugin.saveSettings();
+          this.display();
+        }),
+      );
+    const cfg = (() => {
+      try {
+        return this.plugin.router.resolveConfig("embedding");
+      } catch {
+        return null;
+      }
+    })();
+    const embModels = (cfg?.models ?? []).filter((m) => /embed|bge|m3e|gte|e5/i.test(m));
+    const model = new Setting(el)
+      .setName("Embedding 模型")
+      .setDesc(`使用 Embedding 服务商${cfg ? `（${cfg.name}）` : ""}上的模型。更换模型或切分参数后需要重建索引。`)
+      .addText((t) => {
+        t.setPlaceholder(embModels[0] ?? "例如 text-embedding-3-small").setValue(s.ragModel).onChange(async (v) => {
+          s.ragModel = v.trim();
+          await this.plugin.saveSettings();
+        });
+        const list = model.controlEl.createEl("datalist", { attr: { id: "ai-agent-embedding-models" } });
+        for (const m of embModels.length ? embModels : cfg?.models ?? []) list.createEl("option", { value: m });
+        t.inputEl.setAttr("list", list.id);
+      });
+    const numeric = (name: string, desc: string, key: "ragChunkSize" | "ragChunkOverlap" | "ragTopK" | "ragThreshold", min: number, max: number, step = 1) =>
+      new Setting(el)
+        .setName(name)
+        .setDesc(desc)
+        .addText((t) => {
+          t.inputEl.type = "number";
+          t.inputEl.step = String(step);
+          t.setValue(String(s[key])).onChange(async (v) => {
+            const n = Number(v);
+            if (!Number.isFinite(n)) return;
+            s[key] = Math.min(max, Math.max(min, step < 1 ? n : Math.round(n)));
+            await this.plugin.saveSettings();
+          });
+        });
+    numeric("片段大小（字符）", "每个片段的目标长度（200–4000）。", "ragChunkSize", 200, 4000);
+    numeric("片段重叠（字符）", "相邻片段之间保留的重叠，避免关键句被切断（0–1000）。", "ragChunkOverlap", 0, 1000);
+    numeric("返回数量（Top K）", "每次检索返回的片段数（1–30）。", "ragTopK", 1, 30);
+    numeric("相似度阈值", "低于该余弦相似度的片段不返回（0–1）。", "ragThreshold", 0, 1, 0.05);
+
+    const st = rag.stats();
+    const status = rag.status;
+    const desc =
+      status.state === "indexing"
+        ? `正在索引… ${status.done}/${status.total}`
+        : status.state === "error"
+          ? `出错：${status.error}`
+          : st && st.updatedAt
+            ? `${st.notes} 篇笔记 · ${st.chunks} 个片段 · ${st.model} · 更新于 ${new Date(st.updatedAt).toLocaleString("zh-CN")}`
+            : "尚未建立索引。";
+    const idx = new Setting(el).setName("索引").setDesc(desc);
+    if (status.state === "indexing") idx.addButton((b) => b.setButtonText("停止").onClick(() => rag.cancel()));
+    else {
+      idx.addButton((b) =>
+        b
+          .setButtonText("更新索引")
+          .setCta()
+          .setDisabled(!rag.enabled)
+          .onClick(async () => {
+            const off = rag.onChange(() => this.display());
+            await rag.sync();
+            off();
+            this.display();
+          }),
+      );
+      idx.addButton((b) =>
+        b
+          .setButtonText("重建")
+          .setDisabled(!rag.enabled)
+          .onClick(async () => {
+            const off = rag.onChange(() => this.display());
+            await rag.sync({ rebuild: true });
+            off();
+            this.display();
+          }),
+      );
+      idx.addExtraButton((b) =>
+        b
+          .setIcon("trash")
+          .setTooltip("删除索引")
+          .onClick(async () => {
+            await rag.clear();
+            this.display();
+          }),
+      );
+    }
   }
 
   private renderEditing(el: HTMLElement): void {

@@ -1,7 +1,7 @@
 import type { ProviderConfig } from "../providers/base/provider.types";
 
 /** Task types that can be routed to different models (SRS §4.1.5). */
-export type TaskType = "chat" | "editing" | "completion";
+export type TaskType = "chat" | "editing" | "completion" | "embedding";
 
 export type TransportMode = "auto" | "node" | "fetch";
 
@@ -42,12 +42,21 @@ export interface PluginSettings {
   promptFolder: string;
   /** Prompt note (scope: system) appended to the chat system prompt; "" = none. */
   chatPersonaPath: string;
+
+  /** Local semantic index (SRS §4.7.3). */
+  ragEnabled: boolean;
+  /** Embedding model id on the embedding provider. */
+  ragModel: string;
+  ragChunkSize: number;
+  ragChunkOverlap: number;
+  ragTopK: number;
+  ragThreshold: number;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
   providers: [],
   defaultProviderId: "",
-  taskModels: { chat: "", editing: "", completion: "" },
+  taskModels: { chat: "", editing: "", completion: "", embedding: "" },
   enableStreaming: true,
   showReasoning: true,
   transport: "auto",
@@ -65,6 +74,12 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   completionModel: "",
   promptFolder: "AI Prompts",
   chatPersonaPath: "",
+  ragEnabled: false,
+  ragModel: "",
+  ragChunkSize: 800,
+  ragChunkOverlap: 120,
+  ragTopK: 6,
+  ragThreshold: 0.3,
 };
 
 const num = (v: unknown, fallback: number | undefined, min?: number, max?: number): number | undefined => {
@@ -166,6 +181,12 @@ export function normalizeSettings(raw: unknown): PluginSettings {
     promptFolder:
       typeof r.promptFolder === "string" && r.promptFolder.trim() ? r.promptFolder.trim().replace(/^\/+|\/+$/g, "") : DEFAULT_SETTINGS.promptFolder,
     chatPersonaPath: typeof r.chatPersonaPath === "string" ? r.chatPersonaPath : "",
+    ragEnabled: r.ragEnabled === true,
+    ragModel: typeof r.ragModel === "string" ? r.ragModel.trim() : "",
+    ragChunkSize: num(r.ragChunkSize, DEFAULT_SETTINGS.ragChunkSize, 200, 4000)!,
+    ragChunkOverlap: num(r.ragChunkOverlap, DEFAULT_SETTINGS.ragChunkOverlap, 0, 1000)!,
+    ragTopK: num(r.ragTopK, DEFAULT_SETTINGS.ragTopK, 1, 30)!,
+    ragThreshold: num(r.ragThreshold, DEFAULT_SETTINGS.ragThreshold, 0, 1)!,
   };
 }
 

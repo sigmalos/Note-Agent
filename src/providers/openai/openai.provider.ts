@@ -7,6 +7,8 @@ import type {
   ChatRequest,
   ChatResponse,
   ConnectionTestResult,
+  EmbeddingRequest,
+  EmbeddingResponse,
   LLMProvider,
   ModelInfo,
   ProviderCapabilities,
@@ -138,6 +140,38 @@ export class OpenAICompatibleProvider implements LLMProvider {
     } catch {
       throw new LLMError("bad_response", { detail: "模型列表不是合法 JSON", where: "获取模型列表" });
     }
+  }
+
+  async embed(request: EmbeddingRequest): Promise<EmbeddingResponse> {
+    const problems = this.validateConfig();
+    if (!request.model?.trim()) problems.push("尚未设置 Embedding 模型");
+    if (problems.length) throw new LLMError("config", { detail: problems.join("；") });
+    const res = await this.transport({
+      url: `${resolveApiRoot(this.config.endpoint)}/embeddings`,
+      method: "POST",
+      headers: this.headers(false),
+      body: JSON.stringify({ model: request.model.trim(), input: request.input }),
+      signal: request.signal,
+      timeoutMs: this.timeoutMs(),
+    });
+    const text = await res.text();
+    if (res.status < 200 || res.status >= 300) throw errorFromStatus(res.status, text, "Embedding");
+    let json: any;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw new LLMError("bad_response", { detail: text.slice(0, 200), where: "Embedding" });
+    }
+    const data: any[] = Array.isArray(json?.data) ? json.data : [];
+    if (data.length !== request.input.length) {
+      throw new LLMError("bad_response", { detail: `返回了 ${data.length} 个向量，期望 ${request.input.length} 个`, where: "Embedding" });
+    }
+    const vectors = data
+      .slice()
+      .sort((a, b) => (a?.index ?? 0) - (b?.index ?? 0))
+      .map((d) => (Array.isArray(d?.embedding) ? (d.embedding as number[]) : []));
+    if (vectors.some((v) => !v.length)) throw new LLMError("bad_response", { detail: "向量为空（该服务可能不支持 Embedding 或返回了 base64 格式）", where: "Embedding" });
+    return { vectors, usage: json.usage ? mapUsage(json.usage) : undefined };
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {

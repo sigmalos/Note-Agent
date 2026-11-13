@@ -103,6 +103,17 @@ export type ChatChunk =
   | { type: "tool_call"; call: ToolCall }
   | { type: "done"; finishReason?: string; usage?: Usage };
 
+export interface EmbeddingRequest {
+  model: string;
+  input: string[];
+  signal?: AbortSignal;
+}
+
+export interface EmbeddingResponse {
+  vectors: number[][];
+  usage?: Usage;
+}
+
 export interface ModelInfo {
   id: string;
   ownedBy?: string;
@@ -141,4 +152,6 @@ export interface LLMProvider {
   chat(request: ChatRequest): Promise<ChatResponse>;
   /** Streams chunks; degrades to a single chunk when streaming is disabled/unsupported. */
   streamChat(request: ChatRequest): AsyncIterable<ChatChunk>;
+  /** OpenAI /embeddings: one vector per input, in order. */
+  embed?(request: EmbeddingRequest): Promise<EmbeddingResponse>;
 }

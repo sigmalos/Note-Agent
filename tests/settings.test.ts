@@ -37,7 +37,7 @@ describe("normalizeSettings", () => {
     expect(s.providers.map((p) => p.id)).toEqual(["a", "a-1"]);
     expect(s.providers[0]).toMatchObject({ endpoint: "https://x", temperature: 2, timeout: 120, name: "m1" });
     expect(s.defaultProviderId).toBe("a");
-    expect(s.taskModels).toEqual({ chat: "a", editing: "", completion: "" });
+    expect(s.taskModels).toEqual({ chat: "a", editing: "", completion: "", embedding: "" });
     expect(s.excludedFolders).toEqual(["Private"]);
   });
 

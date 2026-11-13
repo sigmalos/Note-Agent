@@ -10,6 +10,7 @@ import {
   type AgentState,
   type AgentStep,
   type PlanStep,
+  type ToolContext,
   type ToolStep,
   type VaultPort,
 } from "./types";
@@ -45,6 +46,8 @@ export interface AgentRunOptions {
   limits: AgentLimits;
   /** Max characters of a note returned by read tools. */
   maxReadChars: number;
+  /** Semantic (vector) search, when enabled. */
+  semantic?: ToolContext["semantic"];
   signal: AbortSignal;
   /** Ask the user about a write (Accept mode) or delete. Resolves when they decide. */
   approve: (step: ToolStep) => Promise<Approval>;
@@ -77,7 +80,7 @@ export class AgentRunner {
   async run(messages: LLMMessage[], target: AgentTarget): Promise<void> {
     const turn: AgentTurn = (target.agent = { steps: [], state: "analyzing", iterations: 0 });
     const convo = [...messages];
-    const tools = toolsForMode(this.o.mode).map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
+    const tools = toolsForMode(this.o.mode, { semantic: !!this.o.semantic }).map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
     this.started = this.now();
     const { limits } = this.o;
 
@@ -255,7 +258,7 @@ export class AgentRunner {
       return { content: "计划已更新。" };
     }
 
-    const ctx = { port: this.o.port, maxReadChars: this.o.maxReadChars };
+    const ctx: ToolContext = { port: this.o.port, maxReadChars: this.o.maxReadChars, semantic: this.o.semantic, signal: this.o.signal };
     turn.state = "executing";
 
     if (tool.permission === "read") {

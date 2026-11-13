@@ -1181,6 +1181,7 @@ export class ChatView extends ItemView {
       port: this.plugin.vaultPort,
       limits: { ...DEFAULT_LIMITS, maxIterations: s.agentMaxIterations, maxFileOps: s.agentMaxFileOps },
       maxReadChars: Math.max(4000, Math.min(24_000, s.maxContextTokens)),
+      semantic: this.plugin.rag.enabled ? (q, o) => this.plugin.rag.query(q, o) : undefined,
       signal: req.signal,
       approve: (step) => this.requestApproval(step),
       onUpdate: req.onUpdate,

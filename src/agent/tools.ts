@@ -92,6 +92,35 @@ export const TOOLS: AgentTool<any>[] = [
     },
   },
   {
+    name: "semantic_search",
+    label: "语义搜索",
+    icon: "sparkles",
+    permission: "read",
+    description:
+      "按语义在仓库中检索与问题最相关的笔记片段（向量检索），适合关键词不确定、或需要找“意思相近”的内容时使用。返回片段原文、所在笔记和标题路径。需要更多上下文时再用 read_file 读取全文。",
+    parameters: {
+      type: "object",
+      properties: {
+        query: str("用自然语言描述要找的内容，例如 \"如何减少大模型幻觉\"。", { minLength: 1 }),
+        folder: str("只在该文件夹内检索。"),
+        top_k: { type: "integer", minimum: 1, maximum: 20, description: "返回片段数，默认使用设置中的值。" },
+      },
+      required: ["query"],
+    },
+    describe: (i) => `“${i.query ?? ""}”${i.folder ? ` 📁 ${i.folder}` : ""}`,
+    async run(input, ctx) {
+      if (!ctx.semantic) return { ok: false, output: "语义检索未启用，请改用 search_vault。", summary: "语义检索未启用" };
+      const hits = await ctx.semantic(String(input.query), { folder: input.folder, topK: input.top_k, signal: ctx.signal });
+      if (!hits.length) return ok({ results: [], note: "没有足够相似的片段，可以换种说法或改用 search_vault。" }, "没有找到相似内容");
+      const paths = [...new Set(hits.map((h) => h.path))];
+      return ok(
+        { results: hits.map((h) => ({ path: h.path, section: h.heading, similarity: Math.round(h.score * 100) / 100, text: h.text })) },
+        `${hits.length} 个片段 · ${paths.length} 篇笔记`,
+        paths,
+      );
+    },
+  },
+  {
     name: "read_file",
     label: "读取笔记",
     icon: "book-open",
@@ -305,8 +334,9 @@ export function toolByName(name: string): AgentTool<any> | undefined {
 }
 
 /** Tools offered to the model in a mode: Ask mode gets read tools only. */
-export function toolsForMode(mode: "ask" | "accept" | "auto"): AgentTool<any>[] {
-  const tools = mode === "ask" ? TOOLS.filter((t) => t.permission === "read") : TOOLS;
+export function toolsForMode(mode: "ask" | "accept" | "auto", opts: { semantic?: boolean } = {}): AgentTool<any>[] {
+  let tools = mode === "ask" ? TOOLS.filter((t) => t.permission === "read") : TOOLS;
+  if (!opts.semantic) tools = tools.filter((t) => t.name !== "semantic_search");
   return [PLAN_TOOL, ...tools];
 }
 
