@@ -67,7 +67,7 @@ describe("SessionStore", () => {
     const a = createSession();
     a.title = "A";
     a.updatedAt = 1;
-    const b = createSession("p1");
+    const b = createSession({ providerId: "p1" });
     b.id = `${b.id}-b`;
     b.title = "B";
     b.updatedAt = 2;
@@ -139,7 +139,14 @@ describe("ChatController", () => {
     expect(u.contextText).toContain("笔记内容");
     expect(a).toMatchObject({ role: "assistant", content: "你好", reasoning: "思考", status: "done", modelName: "Fake" });
     expect(requests[0].messages[0].content).toContain("笔记内容");
+    expect(requests[0]).toMatchObject({ model: "Fake", reasoningEffort: "medium" });
     expect((await store.load(session.id))?.messages).toHaveLength(2);
+  });
+
+  it("new sessions inherit the previous choices", () => {
+    const s = createSession({ providerId: "p", model: "m", effort: "max", mode: "auto" });
+    expect(s).toMatchObject({ providerId: "p", model: "m", effort: "max", mode: "auto", messages: [] });
+    expect(createSession()).toMatchObject({ providerId: "", model: "", effort: "medium", mode: "ask" });
   });
 
   it("marks errors with a user-facing message and supports regenerate", async () => {

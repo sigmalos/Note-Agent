@@ -1,4 +1,5 @@
 import { MarkdownView, Menu, Notice, Platform, Plugin, type Editor, type MenuItem, type WorkspaceLeaf } from "obsidian";
+import { ModelCatalog } from "./chat/model-catalog";
 import { SessionStore } from "./chat/session-manager";
 import { PLUGIN_ID, VIEW_TYPE_CHAT } from "./constants";
 import { ObsidianContext } from "./context/obsidian-context";
@@ -19,6 +20,8 @@ export default class AIAgentPlugin extends Plugin {
   sessions!: SessionStore;
   context!: ObsidianContext;
   edits!: EditManager;
+  /** Models reported by each provider, for the chat model picker. */
+  models!: ModelCatalog;
   private transports: Partial<Record<"node" | "fetch", HttpTransport>> = {};
 
   async onload(): Promise<void> {
@@ -26,6 +29,7 @@ export default class AIAgentPlugin extends Plugin {
     this.keys = new KeyStore(secrets);
     await this.loadSettings();
     this.router = new LLMRouter(() => this.settings, () => this.getTransport(), this.keys);
+    this.models = new ModelCatalog(async (cfg) => (await this.router.providerFor(cfg).listModels()).map((m) => m.id));
     this.context = new ObsidianContext(this.app, () => this.settings.excludedFolders);
     const pluginDir = this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${PLUGIN_ID}`;
     this.sessions = new SessionStore(this.app.vault.adapter, `${pluginDir}/data/sessions`);
@@ -59,6 +63,8 @@ export default class AIAgentPlugin extends Plugin {
   async saveSettings(): Promise<void> {
     logger.debugEnabled = this.settings.debugLogging;
     await this.saveData(this.settings);
+    // Endpoint or key may have changed: fetch model lists again next time.
+    this.models?.clear();
     for (const view of this.chatViews()) view.refreshModels();
   }
 

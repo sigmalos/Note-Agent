@@ -8,7 +8,7 @@
 //   MODEL_BASE_URL   OpenAI-compatible base URL
 //   MODEL_API_KEY    API key
 //   MODEL_ID         default model id (default: DeepSeek-V4.1-Flash)
-//   MODEL_IDS        extra comma-separated model ids to seed as additional configs
+//   MODEL_IDS        extra comma-separated model ids, saved as the provider's frequently used models
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -68,33 +68,37 @@ function seedProviders() {
   try { data = JSON.parse(fs.readFileSync(dataFile, "utf8")); } catch { /* first run */ }
   data.providers = Array.isArray(data.providers) ? data.providers : [];
 
-  const ids = [process.env.MODEL_ID || "DeepSeek-V4.1-Flash"];
-  for (const m of (process.env.MODEL_IDS || "").split(",").map((s) => s.trim()).filter(Boolean)) {
-    if (!ids.includes(m)) ids.push(m);
-  }
-
-  ids.forEach((model, i) => {
-    const id = `env-${model.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
-    const cfg = {
-      id,
-      name: `${model} (.env)`,
-      presetId: "custom",
-      protocol: "openai-compatible",
-      endpoint: baseUrl,
-      apiKey: apiKey || "",
-      model,
-      enableStreaming: true,
-      timeout: 120,
-      customHeaders: {},
-    };
-    const idx = data.providers.findIndex((p) => p.id === id);
-    if (idx >= 0) data.providers[idx] = { ...data.providers[idx], ...cfg };
-    else data.providers.push(cfg);
-    if (i === 0 && !data.defaultProviderId) data.defaultProviderId = id;
-  });
-
+  const model = process.env.MODEL_ID || "DeepSeek-V4.1-Flash";
+  const models = (process.env.MODEL_IDS || "").split(",").map((s) => s.trim()).filter((m) => m && m !== model);
+  // One provider for the gateway; its models are picked per chat. Older seeds created one
+  // config per model (env-<model>) — fold those into the single gateway entry.
+  const id = "env-gateway";
+  const host = new URL(/^https?:/.test(baseUrl) ? baseUrl : `https://${baseUrl}`).hostname;
+  const label = host.split(".").slice(-2, -1)[0] || host;
+  const prev = data.providers.find((p) => p.id === id);
+  const legacy = data.providers.filter((p) => p.id.startsWith("env-") && p.id !== id).map((p) => p.model);
+  const cfg = {
+    id,
+    name: `${label.charAt(0).toUpperCase()}${label.slice(1)} (.env)`,
+    presetId: "custom",
+    protocol: "openai-compatible",
+    endpoint: baseUrl,
+    apiKey: apiKey || "",
+    model,
+    models: [...new Set([...(prev?.models ?? []), ...legacy, ...models])].filter((m) => m !== model),
+    enableStreaming: true,
+    timeout: 120,
+    customHeaders: {},
+  };
+  const removed = new Set(data.providers.filter((p) => p.id.startsWith("env-") && p.id !== id).map((p) => p.id));
+  data.providers = data.providers.filter((p) => !removed.has(p.id));
+  const idx = data.providers.findIndex((p) => p.id === id);
+  if (idx >= 0) data.providers[idx] = { ...data.providers[idx], ...cfg, apiKeySecretId: undefined };
+  else data.providers.unshift(cfg);
+  if (!data.defaultProviderId || removed.has(data.defaultProviderId)) data.defaultProviderId = id;
+  for (const k of Object.keys(data.taskModels ?? {})) if (removed.has(data.taskModels[k])) data.taskModels[k] = "";
   fs.writeFileSync(dataFile, JSON.stringify(data, null, 2));
-  console.log(`✓ Seeded ${ids.length} model config(s) from .env: ${ids.join(", ")}`);
+  console.log(`✓ Seeded provider ${cfg.name}: ${model}${cfg.models.length ? ` (+ ${cfg.models.join(", ")})` : ""}`);
 }
 
 function reloadInRunningObsidian() {

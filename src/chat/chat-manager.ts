@@ -43,6 +43,7 @@ export function buildRequestMessages(session: ChatSession, contextText: string, 
 }
 
 export interface ChatControllerDeps {
+  /** Provider adapter for the session; `modelName` is the model actually requested. */
   getProvider: (session: ChatSession) => { provider: LLMProvider; providerId: string; modelName: string };
   buildContext: () => Promise<BuiltContext>;
   save: (session: ChatSession) => Promise<void>;
@@ -115,7 +116,8 @@ export class ChatController {
         contextText,
         this.deps.historyBudget(),
       );
-      for await (const chunk of provider.streamChat({ messages, signal: this.abort.signal })) {
+      const request = { messages, signal: this.abort.signal, model: modelName, reasoningEffort: this.session.effort };
+      for await (const chunk of provider.streamChat(request)) {
         if (chunk.type === "content") assistant.content += chunk.text;
         else if (chunk.type === "reasoning") assistant.reasoning += chunk.text;
         else if (chunk.usage) assistant.usage = chunk.usage;

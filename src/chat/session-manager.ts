@@ -1,3 +1,4 @@
+import { DEFAULT_EFFORT, DEFAULT_MODE } from "./chat-options";
 import type { ChatSession, SessionSummary } from "./types";
 
 /** Subset of Obsidian's DataAdapter used for persistence (also easy to fake in tests). */
@@ -17,9 +18,22 @@ export function newSessionId(): string {
   return `${stamp}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
-export function createSession(providerId = ""): ChatSession {
+/** Options a new session inherits from the previous one (the user's last choice sticks). */
+export type SessionOptions = Partial<Pick<ChatSession, "providerId" | "model" | "effort" | "mode">>;
+
+export function createSession(opts: SessionOptions = {}): ChatSession {
   const now = Date.now();
-  return { id: newSessionId(), title: "新对话", createdAt: now, updatedAt: now, providerId, messages: [] };
+  return {
+    id: newSessionId(),
+    title: "新对话",
+    createdAt: now,
+    updatedAt: now,
+    providerId: opts.providerId ?? "",
+    model: opts.model ?? "",
+    effort: opts.effort ?? DEFAULT_EFFORT,
+    mode: opts.mode ?? DEFAULT_MODE,
+    messages: [],
+  };
 }
 
 /** Derive a short title from the first user message. */

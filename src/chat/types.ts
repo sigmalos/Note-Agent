@@ -1,5 +1,8 @@
 import type { ContextKind } from "../core/context-manager";
-import type { Usage } from "../providers/base/provider.types";
+import type { ReasoningEffort, Usage } from "../providers/base/provider.types";
+
+/** How far the chat may go with notes: answer only, propose edits for review, or apply them. */
+export type ChatMode = "ask" | "accept" | "auto";
 
 /** What was attached to a request, recorded for transparency (SRS §4.3.3 / §16.2). */
 export interface ContextAttachment {
@@ -39,6 +42,10 @@ export interface ChatSession {
   updatedAt: number;
   /** Model config used for this session ("" = routed default). */
   providerId: string;
+  /** Model id on that provider ("" / missing = the provider's default model). */
+  model?: string;
+  effort?: ReasoningEffort;
+  mode?: ChatMode;
   messages: ChatMessage[];
 }
 

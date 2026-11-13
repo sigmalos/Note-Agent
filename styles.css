@@ -289,15 +289,25 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
   padding: 4px 6px;
   cursor: default;
 }
-.ai-agent-composer-footer .clickable-icon { padding: 4px; }
-.ai-agent-chat .ai-agent-model-picker {
+.ai-agent-composer-footer .clickable-icon { padding: 4px; flex: none; }
+.ai-agent-composer-footer .clickable-icon.is-open { color: var(--text-normal); background: var(--background-modifier-hover); }
+/* provider / model / effort / mode: one row of compact list buttons that shrink with the sidebar */
+.ai-agent-pickers {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  overflow: hidden;
+}
+.ai-agent-chat .ai-agent-picker {
+  flex: 0 1 auto;
   display: inline-flex;
   align-items: center;
   gap: 4px;
   min-width: 0;
-  max-width: 60%;
   height: 26px;
-  padding: 0 6px 0 8px;
+  padding: 0 6px;
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
   background: transparent;
@@ -306,14 +316,43 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
   border-radius: var(--radius-s);
   cursor: pointer;
 }
-.ai-agent-chat .ai-agent-model-picker:hover,
-.ai-agent-chat .ai-agent-model-picker.is-open { color: var(--text-normal); background: var(--background-modifier-hover); }
-.ai-agent-model-picker svg { width: 13px; height: 13px; flex: none; }
-.ai-agent-model-picker-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-agent-chat .ai-agent-picker:hover,
+.ai-agent-chat .ai-agent-picker.is-open { color: var(--text-normal); background: var(--background-modifier-hover); }
+.ai-agent-chat .ai-agent-picker:focus-visible { box-shadow: 0 0 0 2px hsla(var(--interactive-accent-hsl), 0.35); }
+.ai-agent-picker-icon { display: inline-flex; flex: none; }
+.ai-agent-picker svg { width: 13px; height: 13px; }
+.ai-agent-picker-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the model id matters most: it gets the room, the provider name gives way first */
+.ai-agent-picker.is-provider { flex-shrink: 3; max-width: 34%; }
+.ai-agent-picker.is-model { flex-shrink: 1; max-width: 48%; }
+.ai-agent-picker.is-effort,
+.ai-agent-picker.is-mode { flex: none; }
+.ai-agent-picker.is-mode.is-mode-accept { color: var(--text-accent); }
+.ai-agent-picker.is-mode.is-mode-auto { color: var(--color-orange); }
+.ai-agent-composer { container-type: inline-size; container-name: ai-composer; }
+@container ai-composer (max-width: 400px) {
+  .ai-agent-picker.is-provider .ai-agent-picker-label { display: none; }
+  .ai-agent-picker.is-provider { flex: none; }
+}
+@container ai-composer (max-width: 300px) {
+  .ai-agent-picker.is-effort .ai-agent-picker-label,
+  .ai-agent-picker.is-mode .ai-agent-picker-label { display: none; }
+}
 .ai-agent-spacer { flex: 1; }
-.ai-agent-send { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 12px; }
-.ai-agent-send svg { width: 14px; height: 14px; }
-.ai-agent-send.is-busy { background: var(--background-modifier-error); color: var(--text-on-accent); }
+.ai-agent-chat .ai-agent-send {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  margin-left: 4px;
+  border-radius: 50%;
+}
+.ai-agent-send-icon { display: inline-flex; }
+.ai-agent-send svg { width: 15px; height: 15px; }
+.ai-agent-chat .ai-agent-send.is-busy { background: var(--background-modifier-error); color: var(--text-on-accent); }
 
 /* history modal */
 .ai-agent-session-list { display: flex; flex-direction: column; max-height: 60vh; overflow-y: auto; }
@@ -549,10 +588,11 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 /* ---- composer ---- */
 .ai-agent-composer { transition: border-color 160ms ease, box-shadow 200ms ease; }
 .ai-agent-composer.is-flash { animation: ai-agent-glow 600ms ease-out; }
-.ai-agent-model-picker-chevron { display: inline-flex; transition: transform 200ms var(--ai-ease); }
-.ai-agent-model-picker.is-open .ai-agent-model-picker-chevron { transform: rotate(180deg); }
+.ai-agent-picker-icon svg { transition: transform 200ms var(--ai-ease); }
+.ai-agent-picker.is-bump { animation: ai-agent-bump 240ms var(--ai-ease); }
+.ai-agent-picker.is-bump .ai-agent-picker-icon svg { animation: ai-agent-pop 320ms var(--ai-spring); }
 
-/* ---- popover (model picker) ---- */
+/* ---- popover (composer lists) ---- */
 @keyframes ai-agent-popover-in { from { opacity: 0; transform: translateY(6px) scale(0.97); } to { opacity: 1; transform: none; } }
 @keyframes ai-agent-popover-out { to { opacity: 0; transform: translateY(4px) scale(0.98); } }
 .ai-agent-popover.is-closing { animation: ai-agent-popover-out 110ms ease-in both; pointer-events: none; }
@@ -581,7 +621,8 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 }
 
 /* ==========================================================================
-   Popover — upward list anchored to a composer button (model picker)
+   Popover — upward list anchored to a composer button. One style for every list:
+   quick prompts, provider, model, effort and mode.
    ========================================================================== */
 .ai-agent-popover {
   position: absolute;
@@ -599,7 +640,41 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
   font-size: var(--font-ui-small);
 }
 .theme-dark .ai-agent-popover { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.3); }
-.ai-agent-popover-list { overflow-y: auto; padding: 4px; }
+.ai-agent-popover-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 4px; }
+.ai-agent-popover-search {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  color: var(--text-faint);
+}
+.ai-agent-popover-search-icon { display: inline-flex; }
+.ai-agent-popover-search-icon svg { width: 14px; height: 14px; }
+.ai-agent-popover .ai-agent-popover-search input {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+}
+.ai-agent-popover .ai-agent-popover-search input:focus { border: none; box-shadow: none; }
+.ai-agent-popover-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+}
+.ai-agent-popover-note.is-warning { color: var(--color-orange); }
+.ai-agent-popover-note .ai-agent-popover-icon { color: inherit; }
+.ai-agent-popover-note.is-loading .ai-agent-popover-icon svg { animation: ai-agent-spin 900ms linear infinite; }
 .ai-agent-popover-label {
   padding: 6px 8px 4px;
   font-size: var(--font-ui-smaller);
@@ -624,7 +699,17 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 .ai-agent-popover-icon svg { width: 15px; height: 15px; }
 .ai-agent-popover-item.is-checked .ai-agent-popover-icon { color: var(--interactive-accent); }
 .ai-agent-popover-text { flex: 1; min-width: 0; }
-.ai-agent-popover-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-agent-popover-title-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ai-agent-popover-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-agent-popover-badge {
+  flex: none;
+  padding: 0 5px;
+  border-radius: var(--radius-s);
+  font-size: var(--font-ui-smaller);
+  line-height: 16px;
+  color: var(--text-muted);
+  background: var(--background-modifier-hover);
+}
 .ai-agent-popover-item.is-checked .ai-agent-popover-title { font-weight: var(--font-semibold); }
 .ai-agent-popover-subtitle {
   margin-top: 1px;
@@ -638,4 +723,4 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 .ai-agent-popover-check { display: inline-flex; flex: none; width: 16px; color: var(--interactive-accent); }
 .ai-agent-popover-check svg { width: 15px; height: 15px; }
 .ai-agent-popover-item.is-checked .ai-agent-popover-check svg { animation: ai-agent-pop 300ms var(--ai-spring); }
-.ai-agent-model-picker.is-bump { animation: ai-agent-bump 240ms var(--ai-ease); }
+
