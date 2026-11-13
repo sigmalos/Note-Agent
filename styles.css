@@ -332,7 +332,7 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 .ai-agent-picker.is-mode { flex: none; }
 .ai-agent-chat .ai-agent-picker.is-placeholder { color: var(--text-accent); }
 .ai-agent-picker.is-shaking { animation: ai-agent-shake 360ms ease both; }
-.ai-agent-composer-footer .ai-agent-prompts-btn { margin-left: 2px; }
+.ai-agent-composer-footer .ai-agent-prompts-btn { flex: none; margin-left: 1px; }
 .ai-agent-picker.is-mode.is-mode-accept { color: var(--text-accent); }
 .ai-agent-picker.is-mode.is-mode-auto { color: var(--color-orange); }
 .ai-agent-composer { container-type: inline-size; container-name: ai-composer; }

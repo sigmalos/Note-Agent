@@ -251,6 +251,13 @@ export class ChatView extends ItemView {
     this.effortPicker.btn.addClass("is-effort");
     this.modePicker = this.picker(pickers, "模式", () => this.modeEntries(), { minWidth: 270, cls: "is-wrapping" });
     this.modePicker.btn.addClass("is-mode");
+    this.promptsPicker = this.picker(pickers, "快捷提示词", () => this.quickPromptEntries(), {
+      cls: "ai-agent-prompts-popover",
+      minWidth: 280,
+      maxWidth: 380,
+    });
+    this.promptsPicker.btn.className = "clickable-icon ai-agent-prompts-btn";
+    setIcon(this.promptsPicker.btn, "sparkles");
     footer.createDiv({ cls: "ai-agent-spacer" });
     this.sendBtn = footer.createEl("button", { cls: "mod-cta ai-agent-send" });
     footer.addEventListener("click", (e) => {
@@ -258,13 +265,6 @@ export class ChatView extends ItemView {
       if (e.target === footer || e.target === pickers) this.inputEl.focus();
     });
     this.sendBtn.addEventListener("click", () => void this.onSendClick());
-    this.promptsPicker = this.picker(footer, "快捷提示词", () => this.quickPromptEntries(), {
-      cls: "ai-agent-prompts-popover",
-      minWidth: 280,
-      maxWidth: 380,
-    });
-    this.promptsPicker.btn.className = "clickable-icon ai-agent-prompts-btn";
-    setIcon(this.promptsPicker.btn, "sparkles");
     this.updateSendButton();
     this.setupResizer();
   }
