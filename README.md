@@ -8,9 +8,10 @@
 
 | 模块 | 能力 |
 |---|---|
-| 模型配置 | 多模型配置（新增 / 编辑 / 复制 / 删除 / 设为默认）、服务商预设、连接测试（含延迟）、获取模型列表、Temperature / Max Tokens / Top P / 超时 / 自定义 Header / 流式开关、对话与编辑分别指定模型 |
+| 模型配置 | 多服务商配置（新增 / 编辑 / 复制 / 删除 / 设为默认）、服务商预设、常用模型列表、连接测试（含延迟）、获取模型列表、Temperature / Max Tokens / Top P / 超时 / 自定义 Header / 流式开关、对话与编辑分别指定模型 |
 | 密钥安全 | API Key 存入 Obsidian **SecretStorage**（1.11.4+），不写入 `data.json`；日志与错误信息自动脱敏；设置界面默认隐藏 |
-| AI Chat | 侧边栏多轮对话、流式输出、停止 / 重新生成 / 复制 / 插入到笔记、Markdown 渲染与可点击 `[[双链]]`、推理模型“思考过程”折叠显示、快捷提示词、会话历史（新建 / 重命名 / 删除 / 恢复）、导出为笔记 |
+| AI Chat | 侧边栏多轮对话、流式输出、停止 / 重新生成 / 复制 / 插入到笔记、Markdown 渲染与可点击 `[[双链]]`、推理模型“思考过程”折叠显示、快捷提示词、会话历史（新建 / 重命名 / 删除 / 恢复）、导出为笔记；输入框下方切换**服务商、模型、思考强度、模式** |
+| 对话模式 | **Ask** 只问答；**Accept** 模型提出对附带笔记的修改，以 Diff 卡片展示，逐条或全部接受 / 拒绝；**Auto** 修改直接写入，可在卡片上撤销或在编辑器中 Ctrl/Cmd+Z |
 | 上下文 | 当前笔记、选中文本、手动添加任意笔记；输入框上方的附件标签一键开关（悬停查看 Token 估算，超出上限时标橙）；预算截断；**可查看每轮实际发送给模型的内容**；排除敏感文件夹 |
 | AI 编辑 | 重写、润色、扩写、精简、总结、翻译、语法修正、续写、自定义指令；并排 / 行内 Diff 预览；接受 / 拒绝 / 重新生成 / 复制 / 继续修改 |
 | 编辑安全 | 未确认不写入；通过 Editor API 写入，可 Ctrl/Cmd+Z 撤销；生成期间原文被改动、删除或无法唯一定位时**拒绝写入**；笔记关闭或重命名后仍写入正确文件；按 Markdown 结构插入，不破坏标题、列表、Callout |
@@ -34,7 +35,7 @@ npm run seed           # 构建 + 部署 + 把 .env 中的模型写入插件配�
 npm run deploy         # 之后每次修改：构建 + 部署 + 通过 Obsidian CLI 热重载插件
 ```
 
-`seed` 会把 `MODEL_ID` 以及逗号分隔的 `MODEL_IDS` 各写成一条模型配置，例如：
+`seed` 会为网关写入一个服务商配置：`MODEL_ID` 作为默认模型，逗号分隔的 `MODEL_IDS` 作为常用模型（旧版本按模型拆分的 `env-*` 配置会被合并），例如：
 
 ```bash
 MODEL_IDS=GLM-4.5-Flash,Qwen3.6-Flash,Kimi-K2.7 npm run seed
@@ -50,9 +51,10 @@ MODEL_IDS=GLM-4.5-Flash,Qwen3.6-Flash,Kimi-K2.7 npm run seed
 |---|---|
 | API Endpoint | `https://api.deepseek.com`（只填域名会自动补 `/v1`）、`https://open.bigmodel.cn/api/paas/v4`、`https://dashscope.aliyuncs.com/compatible-mode/v1`、`http://localhost:11434/v1` |
 | API Key | `sk-…`（本地服务可留空） |
-| Model ID | `deepseek-chat`、`glm-4-flash`、`qwen-plus` … 可点击列表按钮从服务端获取 |
+| Model ID | 默认模型：`deepseek-chat`、`glm-4-flash`、`qwen-plus` … 可点击列表按钮从服务端获取 |
+| 常用模型 | 可选，每行一个，在对话的模型列表中置顶 |
 
-点击“测试”确认连通。“任务模型”中可以为对话和编辑分别指定模型。
+点击“测试”确认连通。“任务模型”中可以为对话和编辑分别指定服务商。
 
 > 网络：桌面端默认使用 Node 网络栈（不受 CORS 限制，支持流式）。如果需要走系统代理，可在“高级 → 网络请求方式”中切换为“浏览器 fetch”。
 
@@ -62,10 +64,20 @@ MODEL_IDS=GLM-4.5-Flash,Qwen3.6-Flash,Kimi-K2.7 npm run seed
 - 左侧功能区的 🤖 图标，或命令“打开 AI Chat”。
 - 输入框上方的**附件标签**列出将要发送的内容：当前笔记、选中文本（点击可开关）、通过输入框左下角 **+** 附加的其他笔记（× 移除）。悬停标签可查看估算的 Token 数。
 - 拖动对话区与输入区之间的分界线可以调整输入区高度，双击分界线恢复默认（聚焦分界线后也可用 ↑/↓ 调整）。
-- 输入框左下角的模型选择器向上展开模型列表，可为当前会话切换模型（↑/↓ 选择，Enter 确认，Esc 关闭）；新建会话会沿用上次选择的模型。
+- 输入框底部的四个按钮分别向上展开列表（↑/↓ 选择，Enter 确认，Esc 关闭），选择对当前会话生效，新建会话会沿用：
+  - **服务商**：设置中配置的服务商，标有“默认”的是全局默认。
+  - **模型**：先列出默认模型和常用模型，再列出服务端 `/models` 返回的全部模型；模型较多时可直接输入搜索（如 `qwen38`、`glm 4.5`）。
+  - **思考强度**：低 / 中 / 高 / Max，以 `reasoning_effort` 发送（Max 对应 `xhigh`）。服务端不接受该参数时会自动降级或省略，并记住该模型的结果。
+  - **模式**：Ask（只问答）、Accept（修改需确认）、Auto（自动修改）。模型只能修改**本轮附带的笔记**；找不到原文或原文出现多次时不会写入。
 - 快捷键：Enter 发送，Shift+Enter 换行，输入框为空时 ↑ 找回上一条提问，生成中按 Esc 停止。
 - 用户消息下方的 📎 可查看该轮**实际发送给模型的上下文**。
 - ✨ 打开快捷提示词：总结当前笔记、提取知识点、生成大纲、解释选中内容等。
+
+### 在对话中修改笔记（Accept / Auto）
+1. 把模式切换为 Accept 或 Auto，确认要修改的笔记出现在输入框上方的附件标签中。
+2. 直接提出要求，例如“在待办里加一条……”“把第 4 步写得更具体”。
+3. 回答中的每处修改显示为一张卡片（文件名、+/− 字数、行内 Diff）：Accept 模式下点“接受 / 拒绝”或“全部接受”；Auto 模式下已自动写入，可点“撤销”。
+4. 修改通过编辑器写入（笔记已打开时可 Ctrl/Cmd+Z 撤销），笔记未打开时原子写入文件。后续对话会告诉模型哪些修改被接受、拒绝或撤销。
 
 ### AI 编辑
 1. 在编辑器中选中文本（续写和自定义生成可以不选）。
@@ -111,7 +123,7 @@ scripts/ui-keys.sh text "文字"              # 输入文字
 scripts/ui-keys.sh key Enter [modifiers]    # 按键，modifiers：1 Alt / 2 Ctrl / 4 Meta / 8 Shift
 ```
 
-> macOS 默认使用系统原生菜单，CDP 无法点击原生菜单项；测试菜单交互时可在测试仓库中执行 `app.vault.setConfig('nativeMenus', false)`。
+> 对话框中的所有上拉列表都是插件自绘的，可以直接用这些脚本测试。编辑器右键菜单仍是系统原生菜单，CDP 无法点击；测试它时可在测试仓库中执行 `app.vault.setConfig('nativeMenus', false)`。
 
 ### 目录结构
 
@@ -130,7 +142,7 @@ src/
 │   ├── context-manager.ts     上下文排序、预算、定界
 │   ├── token-manager.ts       Token 估算与截断
 │   └── prompt-manager.ts      内置 Prompt 与编辑操作
-├── chat/                      会话模型、存储、ChatController
+├── chat/                      会话模型与存储、ChatController、对话选项、模型目录、笔记修改解析
 ├── editor/                    Diff、编辑定位与冲突检测、EditSession、EditManager
 ├── context/                   Obsidian 上下文采集
 ├── settings/                  设置模型、SecretStorage 密钥、设置页
@@ -142,7 +154,7 @@ tests/                         单元测试；tests/live 为真实接口测试
 
 本版本实现了 SRS §15.1 / §17 的全部 MVP 条目。以下内容按 SRS §15.2 / §18 留待后续版本：
 
-- Agent 工具调用（search_vault / read_file / create_file …）与执行计划面板（V1.3–V1.4）
+- Agent 工具调用（search_vault / read_file / create_file …）与执行计划面板（V1.3–V1.4）；目前 Accept / Auto 模式只能修改本轮附带的笔记，不能新建文件
 - Vault 搜索、反向链接 / 出链上下文、RAG 向量检索（V1.2 / V2.0）
 - 行内 Ghost Text 自动补全（V1.5）
 - 自定义 Prompt 模板管理（以 Markdown 文件保存）、MCP、Skills（V1.1 / V2.0）
