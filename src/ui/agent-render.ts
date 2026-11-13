@@ -1,13 +1,14 @@
-import { setIcon } from "obsidian";
 import { changeTexts, focusDiff } from "../agent/changes";
 import type { AgentTurn, Approval } from "../agent/orchestrator";
 import { PLAN_TOOL, toolByName } from "../agent/tools";
 import type { FileChange, ToolStep } from "../agent/types";
 import { diffStats, diffText } from "../editor/diff";
 import { setIconAny } from "./components/icons";
+import { sigOf, type Slot } from "./components/reconcile";
 
 export interface AgentRenderHooks {
-  renderMarkdown(text: string, el: HTMLElement): void;
+  /** Slot rendering `text` as Markdown (the chat view owns Markdown components). */
+  markdown(key: string, text: string): Slot;
   openNote(path: string): void;
   decide(step: ToolStep, decision: Approval): void;
   undo(step: ToolStep): void;
@@ -35,45 +36,90 @@ const STATUS_ICON: Record<ToolStep["status"], string[]> = {
   skipped: ["minus"],
 };
 
+/** Render into a scratch parent and return the single element a renderer created. */
+function one(render: (parent: HTMLElement) => void): HTMLElement {
+  const tmp = createDiv();
+  render(tmp);
+  return tmp.firstElementChild as HTMLElement;
+}
+
+/** Rebuild a node's content in place, keeping the node (and a <details>' open state). */
+function refill(el: HTMLElement, fresh: HTMLElement): void {
+  const wasOpen = el instanceof HTMLDetailsElement && el.open;
+  el.className = fresh.className;
+  el.replaceChildren(...Array.from(fresh.childNodes));
+  if (el instanceof HTMLDetailsElement && fresh instanceof HTMLDetailsElement) el.open = wasOpen || fresh.open;
+}
+
 /**
  * Agent run inside an assistant message (SRS §5.1.4 Agent Task Panel, inline): plan checklist,
  * the model's text and tool calls in order, approval cards for writes, and a summary of the
  * files that were changed with undo.
+ *
+ * Returns keyed slots for `reconcile`: while the run streams, only the parts that changed are
+ * touched, so finished tool cards don't re-render (no flashing, expanded rows stay open).
  */
-export function renderAgentTurn(body: HTMLElement, turn: AgentTurn, streaming: boolean, hooks: AgentRenderHooks): void {
-  if (turn.plan?.length) renderPlan(body, turn);
-
-  for (const step of turn.steps) {
-    if (step.type === "text") {
-      if (!step.text.trim()) continue;
-      const part = body.createDiv({ cls: "markdown-rendered ai-agent-msg-markdown" });
-      hooks.renderMarkdown(step.text, part);
-      continue;
-    }
-    if (step.name === PLAN_TOOL.name) continue; // shown as the checklist
-    if (step.change) renderChangeCard(body, step, hooks);
-    else renderToolRow(body, step, hooks);
+export function agentSlots(turn: AgentTurn, streaming: boolean, hooks: AgentRenderHooks): Slot[] {
+  const slots: Slot[] = [];
+  if (turn.plan?.length) {
+    slots.push({ key: "plan", sig: sigOf(turn.plan), build: () => one((p) => renderPlan(p, turn)) });
   }
+
+  turn.steps.forEach((step, i) => {
+    if (step.type === "text") {
+      if (step.text.trim()) slots.push(hooks.markdown(`text-${i}`, step.text));
+      return;
+    }
+    if (step.name === PLAN_TOOL.name) return; // shown as the checklist
+    const live = hooks.live && step.status === "awaiting";
+    if (step.change) {
+      const sig = sigOf([step.status, step.applied, step.reverted, step.error, live]);
+      const build = () => one((p) => renderChangeCard(p, step, hooks));
+      slots.push({ key: `change-${step.id}`, sig, build, update: (el) => refill(el, build()) });
+    } else {
+      const sig = sigOf([step.status, step.summary, step.error, step.result, step.paths, step.label, step.detail, live]);
+      const build = () => one((p) => renderToolRow(p, step, hooks));
+      slots.push({ key: `tool-${step.id}`, sig, build, update: (el) => refill(el, build()) });
+    }
+  });
 
   const label = streaming ? STATE_LABEL[turn.state] : undefined;
   const running = turn.steps.some((s) => s.type === "tool" && s.status === "running");
   if (label && !running) {
-    const st = body.createDiv({ cls: `ai-agent-agent-state is-${turn.state}` });
-    if (turn.state === "waiting_approval") setIconAny(st.createSpan({ cls: "ai-agent-agent-state-icon" }), ["hand", "info"]);
-    else {
-      const dots = st.createSpan({ cls: "ai-agent-typing-dots" });
-      for (let i = 0; i < 3; i++) dots.createSpan();
-    }
-    st.createSpan({ text: label });
+    slots.push({
+      key: "state",
+      sig: sigOf([turn.state, label]),
+      build: () => {
+        const st = createDiv({ cls: `ai-agent-agent-state is-${turn.state}` });
+        if (turn.state === "waiting_approval") setIconAny(st.createSpan({ cls: "ai-agent-agent-state-icon" }), ["hand", "info"]);
+        else {
+          const dots = st.createSpan({ cls: "ai-agent-typing-dots" });
+          for (let k = 0; k < 3; k++) dots.createSpan();
+        }
+        st.createSpan({ text: label });
+        return st;
+      },
+    });
   }
 
   if (turn.stopReason && !streaming) {
-    const n = body.createDiv({ cls: "ai-agent-agent-stop" });
-    setIconAny(n.createSpan(), ["octagon-alert", "alert-triangle"]);
-    n.createSpan({ text: turn.stopReason });
+    slots.push({
+      key: "stop",
+      sig: sigOf(turn.stopReason),
+      build: () => {
+        const n = createDiv({ cls: "ai-agent-agent-stop" });
+        setIconAny(n.createSpan(), ["octagon-alert", "alert-triangle"]);
+        n.createSpan({ text: turn.stopReason });
+        return n;
+      },
+    });
   }
 
-  if (!streaming) renderChangedFiles(body, turn, hooks);
+  if (!streaming) {
+    const applied = turn.steps.filter((s) => s.type === "tool" && s.applied && !s.reverted).map((s) => (s as ToolStep).id);
+    if (applied.length >= 2) slots.push({ key: "changed", sig: sigOf(applied), build: () => one((p) => renderChangedFiles(p, turn, hooks)) });
+  }
+  return slots;
 }
 
 function renderPlan(body: HTMLElement, turn: AgentTurn): void {
@@ -269,4 +315,3 @@ function renderChangedFiles(body: HTMLElement, turn: AgentTurn, hooks: AgentRend
   }
 }
 
-export { setIcon };

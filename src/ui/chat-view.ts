@@ -10,7 +10,8 @@ import { diffStats, diffText } from "../editor/diff";
 import { applyChange, revertChange } from "../agent/changes";
 import { AgentRunner, type Approval } from "../agent/orchestrator";
 import { DEFAULT_LIMITS, type ToolStep } from "../agent/types";
-import { renderAgentTurn } from "./agent-render";
+import { agentSlots } from "./agent-render";
+import { reconcile, sigOf, type Slot } from "./components/reconcile";
 import { QUICK_PROMPTS } from "../core/prompt-manager";
 import { estimateTokens } from "../core/token-manager";
 import type AIAgentPlugin from "../main";
@@ -38,6 +39,12 @@ interface RenderedMessage {
   el: HTMLElement;
   component: Component;
   pending: number | null;
+  /** Markdown parts by slot key (children of `component`). */
+  parts: Map<string, Component>;
+  /** Painted at least once (later new parts animate in). */
+  painted: boolean;
+  /** The view was at the bottom when this paint started. */
+  stick: boolean;
 }
 
 const RENDER_INTERVAL_MS = 80;
@@ -86,6 +93,7 @@ export class ChatView extends ItemView {
   /** Chips rendered last time, so only newly added chips animate in. */
   private chipKeys = new Set<string>();
   private sendBusy: boolean | null = null;
+  private renderToken = 0;
   /** Agent steps waiting for the user's decision → resolver. */
   private approvals = new Map<string, (d: Approval) => void>();
   private composerEl!: HTMLElement;
@@ -1018,7 +1026,7 @@ export class ChatView extends ItemView {
     let r = this.rendered.get(msg.id);
     if (!r) {
       const el = this.messagesEl.createDiv({ cls: `ai-agent-msg is-${msg.role}`, attr: { "data-id": msg.id } });
-      r = { el, component: new Component(), pending: null };
+      r = { el, component: new Component(), pending: null, parts: new Map(), painted: false, stick: false };
       r.component.load();
       this.rendered.set(msg.id, r);
       this.lastStatus.set(msg.id, msg.status);
@@ -1040,61 +1048,90 @@ export class ChatView extends ItemView {
     }
   }
 
+  /**
+   * Update a message's DOM from its data. Called on every streamed chunk (throttled), so it
+   * reconciles keyed slots instead of rebuilding: unchanged parts (finished tool cards, earlier
+   * paragraphs, the reasoning block) keep their nodes and don't flash or replay animations.
+   */
   private paint(msg: ChatMessage, r: RenderedMessage): void {
     const stick = this.isNearBottom();
+    r.stick = stick;
     const el = r.el;
-    r.component.unload();
-    r.component = new Component();
-    r.component.load();
-    el.empty();
     el.toggleClass("is-streaming", msg.status === "streaming");
     el.toggleClass("is-error", msg.status === "error");
-
+    // New parts of an already visible message fade in; a message's first paint doesn't.
+    const enter = r.painted && !prefersReducedMotion() ? { enterCls: "is-appearing" } : {};
+    r.painted = true;
     const time = new Date(msg.timestamp).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+    const slots: Slot[] = [];
 
     if (msg.role === "user") {
       // Right-aligned like a chat bubble: label + time, the prompt, then what was attached.
-      const header = el.createDiv({ cls: "ai-agent-msg-header" });
-      header.createSpan({ cls: "ai-agent-msg-time", text: time });
-      header.createSpan({ cls: "ai-agent-msg-role", text: "你" });
-      el.createDiv({ cls: "ai-agent-msg-body ai-agent-user-text", text: msg.content });
-      const used = (msg.attachments ?? []).filter((a) => !a.omitted);
+      slots.push({
+        key: "header",
+        sig: time,
+        build: () => {
+          const header = createDiv({ cls: "ai-agent-msg-header" });
+          header.createSpan({ cls: "ai-agent-msg-time", text: time });
+          header.createSpan({ cls: "ai-agent-msg-role", text: "你" });
+          return header;
+        },
+      });
+      slots.push({ key: "body", sig: sigOf(msg.content), build: () => createDiv({ cls: "ai-agent-msg-body ai-agent-user-text", text: msg.content }) });
       if (msg.attachments?.length) {
-        const ctx = el.createDiv({ cls: "ai-agent-msg-context" });
-        setIcon(ctx.createSpan(), "paperclip");
-        const label = used.map((a) => (a.kind === "selection" ? "选中文本" : a.label)).join("、") || "无";
-        ctx.createSpan({ text: `${label}${msg.attachments.some((a) => a.truncated || a.omitted) ? "（部分截断）" : ""}` });
-        ctx.setAttr("aria-label", "查看发送给模型的上下文");
-        ctx.addEventListener("click", () => new ContextViewerModal(this.app, msg.attachments ?? [], msg.contextText).open());
-      }
-    } else {
-      if (msg.reasoning && this.plugin.settings.showReasoning) {
-        const details = el.createEl("details", { cls: "ai-agent-reasoning" });
-        const thinking = msg.status === "streaming" && msg.reasoningMs === undefined;
-        // Auto-expand only while the model is still thinking; afterwards respect the user's choice.
-        details.open = this.reasoningToggled.get(msg.id) ?? thinking;
-        const summary = details.createEl("summary");
-        summary.createSpan({ cls: "ai-agent-reasoning-label", text: thinking ? "思考中" : "思考过程" });
-        const dur = summary.createSpan({ cls: "ai-agent-reasoning-time" });
-        if (thinking && msg.reasoningStartedAt) {
-          // Ticks every second (see onOpen) even when no chunk arrives.
-          dur.setAttr("data-since", String(msg.reasoningStartedAt));
-          dur.setText(formatDuration(Date.now() - msg.reasoningStartedAt));
-          details.addClass("is-thinking");
-        } else if (msg.reasoningMs !== undefined) {
-          dur.setText(`用时 ${formatDuration(msg.reasoningMs)}`);
-        }
-        const rBody = details.createDiv({ cls: "ai-agent-reasoning-body", text: msg.reasoning });
-        summary.addEventListener("click", () => {
-          this.reasoningToggled.set(msg.id, !details.open);
-          if (!details.open) window.requestAnimationFrame(() => flash(rBody, "is-revealing"));
+        slots.push({
+          key: "context",
+          sig: sigOf(msg.attachments),
+          build: () => {
+            const used = (msg.attachments ?? []).filter((a) => !a.omitted);
+            const ctx = createDiv({ cls: "ai-agent-msg-context" });
+            setIcon(ctx.createSpan(), "paperclip");
+            const label = used.map((a) => (a.kind === "selection" ? "选中文本" : a.label)).join("、") || "无";
+            ctx.createSpan({ text: `${label}${msg.attachments!.some((a) => a.truncated || a.omitted) ? "（部分截断）" : ""}` });
+            ctx.setAttr("aria-label", "查看发送给模型的上下文");
+            ctx.addEventListener("click", () => new ContextViewerModal(this.app, msg.attachments ?? [], msg.contextText).open());
+            return ctx;
+          },
         });
       }
-      const body = el.createDiv({ cls: "ai-agent-msg-body" });
+      reconcile(el, slots);
+    } else {
+      if (msg.reasoning && this.plugin.settings.showReasoning) slots.push(this.reasoningSlot(msg));
+      slots.push({ key: "body", sig: "body", build: () => createDiv({ cls: "ai-agent-msg-body" }) });
+      if (msg.status === "stopped") slots.push({ key: "note", sig: "stopped", build: () => createDiv({ cls: "ai-agent-msg-note", text: "已停止生成" }) });
+      if (msg.error) {
+        slots.push({
+          key: "error",
+          sig: sigOf(msg.error),
+          build: () => {
+            const err = createDiv({ cls: "ai-agent-msg-error" });
+            err.createDiv({ text: msg.error });
+            return err;
+          },
+        });
+      }
+      if (msg.status !== "streaming") {
+        const isLast = this.session.messages[this.session.messages.length - 1]?.id === msg.id;
+        const pending = (msg.edits ?? []).filter((x) => x.status === "pending").length;
+        slots.push({
+          key: "footer",
+          sig: sigOf([msg.status, !!msg.content, isLast, pending, msg.usage?.totalTokens, msg.timestamp, msg.modelName]),
+          build: () => {
+            const footer = createDiv({ cls: "ai-agent-msg-footer" });
+            this.renderAssistantActions(footer, msg);
+            return footer;
+          },
+        });
+      }
+      reconcile(el, slots, enter);
+
+      const body = el.querySelector<HTMLElement>(":scope > .ai-agent-msg-body")!;
       const sourcePath = this.plugin.context.snapshot()?.file.path ?? "";
+      const md = (key: string, text: string) => this.markdownSlot(r, key, text, sourcePath);
+      let inner: Slot[] = [];
       if (msg.agent && (msg.agent.steps.length || msg.agent.plan)) {
-        renderAgentTurn(body, msg.agent, msg.status === "streaming", {
-          renderMarkdown: (text, part) => void MarkdownRenderer.render(this.app, text, part, sourcePath, r.component),
+        inner = agentSlots(msg.agent, msg.status === "streaming", {
+          markdown: md,
           openNote: (path) => this.openNote(path),
           decide: (step, d) => this.approvals.get(step.id)?.(d),
           undo: (step) => void this.toggleStep(msg, [step], "undo"),
@@ -1105,32 +1142,119 @@ export class ChatView extends ItemView {
       } else if (msg.content) {
         const canEdit = msg.mode === "accept" || msg.mode === "auto";
         const segments = canEdit ? parseNoteEdits(msg.content) : [{ type: "text" as const, text: msg.content }];
-        for (const seg of segments) {
-          if (seg.type === "edit") {
-            this.renderEditCard(body, msg, seg.edit);
-            continue;
+        segments.forEach((seg, i) => {
+          if (seg.type === "text") {
+            inner.push(md(`md-${i}`, seg.text));
+            return;
           }
-          // One container per segment keeps text and edit cards in order (render is async).
-          const part = body.createDiv({ cls: "markdown-rendered ai-agent-msg-markdown" });
-          void MarkdownRenderer.render(this.app, seg.text, part, sourcePath, r.component);
+          const rec = msg.edits?.find((x) => x.index === seg.edit.index);
+          inner.push({
+            key: `edit-${seg.edit.index}`,
+            sig: sigOf([seg.edit, rec, msg.status, msg.mode]),
+            build: () => {
+              const holder = createDiv();
+              this.renderEditCard(holder, msg, seg.edit);
+              return holder.firstElementChild as HTMLElement;
+            },
+          });
+        });
+      }
+      if (msg.status === "streaming" && !msg.content && !msg.agent?.steps.length && !msg.reasoning) {
+        inner.push({
+          key: "typing",
+          sig: "typing",
+          build: () => {
+            const typing = createDiv({ cls: "ai-agent-typing", attr: { "aria-label": "正在等待模型响应" } });
+            const dots = typing.createSpan({ cls: "ai-agent-typing-dots" });
+            for (let i = 0; i < 3; i++) dots.createSpan();
+            typing.createSpan({ text: "正在等待模型响应" });
+            return typing;
+          },
+        });
+      }
+      reconcile(body, inner, enter);
+      // Markdown components of parts that are gone.
+      const live = new Set(inner.map((x) => x.key));
+      for (const [key, comp] of r.parts) {
+        if (!live.has(key)) {
+          r.component.removeChild(comp);
+          r.parts.delete(key);
         }
       }
-      if (msg.status === "streaming" && !msg.content && !msg.agent?.steps.length) {
-        if (!msg.reasoning) {
-          const typing = body.createDiv({ cls: "ai-agent-typing", attr: { "aria-label": "正在等待模型响应" } });
-          const dots = typing.createSpan({ cls: "ai-agent-typing-dots" });
-          for (let i = 0; i < 3; i++) dots.createSpan();
-          typing.createSpan({ text: "正在等待模型响应" });
-        }
-      }
-      if (msg.status === "stopped") el.createDiv({ cls: "ai-agent-msg-note", text: "已停止生成" });
-      if (msg.error) {
-        const err = el.createDiv({ cls: "ai-agent-msg-error" });
-        err.createDiv({ text: msg.error });
-      }
-      if (msg.status !== "streaming") this.renderAssistantActions(el, msg);
     }
     if (stick) this.scrollToBottom();
+  }
+
+  /** Markdown part rendered off-screen and swapped in when ready, so updates never blank it. */
+  private markdownSlot(r: RenderedMessage, key: string, text: string, sourcePath: string): Slot {
+    const render = (el: HTMLElement) => {
+      const comp = r.component.addChild(new Component());
+      const tmp = createDiv();
+      const token = String(++this.renderToken);
+      el.dataset.tok = token;
+      void MarkdownRenderer.render(this.app, text, tmp, sourcePath, comp).then(() => {
+        if (el.dataset.tok !== token) {
+          r.component.removeChild(comp); // a newer render replaced this one
+          return;
+        }
+        el.replaceChildren(...Array.from(tmp.childNodes));
+        const old = r.parts.get(key);
+        if (old && old !== comp) r.component.removeChild(old);
+        r.parts.set(key, comp);
+        if (r.stick) this.scrollToBottom();
+      });
+    };
+    return {
+      key,
+      sig: sigOf(text),
+      build: () => {
+        const el = createDiv({ cls: "markdown-rendered ai-agent-msg-markdown" });
+        render(el);
+        return el;
+      },
+      update: render,
+    };
+  }
+
+  /** Reasoning block, updated in place (keeps its open state and scroll position). */
+  private reasoningSlot(msg: ChatMessage): Slot {
+    const thinking = msg.status === "streaming" && msg.reasoningMs === undefined;
+    const fill = (d: HTMLDetailsElement) => {
+      d.querySelector(".ai-agent-reasoning-label")!.setText(thinking ? "思考中" : "思考过程");
+      const dur = d.querySelector<HTMLElement>(".ai-agent-reasoning-time")!;
+      d.toggleClass("is-thinking", thinking && !!msg.reasoningStartedAt);
+      if (thinking && msg.reasoningStartedAt) {
+        // Ticks every second (see onOpen) even when no chunk arrives.
+        dur.setAttr("data-since", String(msg.reasoningStartedAt));
+        dur.setText(formatDuration(Date.now() - msg.reasoningStartedAt));
+      } else {
+        dur.removeAttribute("data-since");
+        dur.setText(msg.reasoningMs !== undefined ? `用时 ${formatDuration(msg.reasoningMs)}` : "");
+      }
+      const body = d.querySelector<HTMLElement>(".ai-agent-reasoning-body")!;
+      if (body.textContent !== msg.reasoning) body.setText(msg.reasoning ?? "");
+      // Auto-expand only while the model is still thinking; afterwards respect the user's choice.
+      const open = this.reasoningToggled.get(msg.id) ?? thinking;
+      if (d.open !== open) d.open = open;
+    };
+    return {
+      key: "reasoning",
+      sig: sigOf([msg.reasoning, thinking, msg.reasoningMs, msg.reasoningStartedAt, this.reasoningToggled.get(msg.id)]),
+      build: () => {
+        const d = createEl("details", { cls: "ai-agent-reasoning" });
+        const summary = d.createEl("summary");
+        summary.createSpan({ cls: "ai-agent-reasoning-label" });
+        summary.createSpan({ cls: "ai-agent-reasoning-time" });
+        const rBody = d.createDiv({ cls: "ai-agent-reasoning-body" });
+        summary.addEventListener("click", () => {
+          this.reasoningToggled.set(msg.id, !d.open);
+          if (!d.open) window.requestAnimationFrame(() => flash(rBody, "is-revealing"));
+        });
+        fill(d);
+        return d;
+      },
+      update: (el) => fill(el as HTMLDetailsElement),
+    };
   }
 
   private renderAssistantActions(el: HTMLElement, msg: ChatMessage): void {

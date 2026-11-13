@@ -71,10 +71,10 @@
   flex: 1 1 0;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--size-4-3);
+  padding: var(--size-4-4) var(--size-4-4) var(--size-4-6);
   display: flex;
   flex-direction: column;
-  gap: var(--size-4-3);
+  gap: var(--size-4-6);
   user-select: text;
 }
 
@@ -88,7 +88,7 @@
 .ai-agent-empty-title { font-weight: var(--font-semibold); color: var(--text-normal); margin: var(--size-2-3) 0; }
 .ai-agent-empty-desc { font-size: var(--font-ui-small); line-height: 1.5; }
 
-.ai-agent-msg { display: flex; flex-direction: column; gap: 4px; }
+.ai-agent-msg { display: flex; flex-direction: column; gap: var(--size-4-2); }
 .ai-agent-msg-header {
   display: flex;
   align-items: baseline;
@@ -107,15 +107,16 @@
   /* sidebars already use --background-secondary, so tint with the accent instead */
   max-width: 85%;
   background: hsla(var(--interactive-accent-hsl), 0.1);
-  border-radius: var(--radius-m) var(--radius-m) var(--radius-s) var(--radius-m);
-  padding: var(--size-2-3) var(--size-4-3);
+  border-radius: var(--radius-l) var(--radius-l) var(--radius-s) var(--radius-l);
+  padding: var(--size-4-3) var(--size-4-4);
+  line-height: 1.6;
 }
 .ai-agent-msg.is-user .ai-agent-msg-context { align-self: flex-end; max-width: 85%; }
 .ai-agent-msg.is-user .ai-agent-msg-context > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* a rule between the prompt and its answer */
 .ai-agent-msg.is-user + .ai-agent-msg.is-assistant {
-  padding-top: var(--size-4-3);
+  padding-top: var(--size-4-5);
   border-top: 1px solid var(--background-modifier-border);
 }
 .ai-agent-user-text { white-space: pre-wrap; word-break: break-word; }
@@ -125,6 +126,8 @@
 .ai-agent-msg-body > :last-child,
 .ai-agent-msg-markdown > :last-child { margin-bottom: 0; }
 .ai-agent-msg-markdown + .ai-agent-msg-markdown { margin-top: var(--p-spacing, 1em); }
+.ai-agent-msg.is-assistant .ai-agent-msg-body { line-height: 1.65; }
+.ai-agent-msg-footer { margin-top: var(--size-2-2); }
 .ai-agent-msg.is-streaming .ai-agent-msg-body > .ai-agent-msg-markdown:last-child > :last-child::after {
   content: "▍";
   margin-left: 2px;
@@ -165,7 +168,7 @@
 .ai-agent-reasoning-time { color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .ai-agent-reasoning-time:empty { display: none; }
 .ai-agent-msg .ai-agent-reasoning-body {
-  margin: 6px 0 2px;
+  margin: var(--size-4-2) 0 var(--size-2-2);
   padding-left: var(--size-4-3);
   border-left: 2px solid var(--background-modifier-border);
   max-height: 320px;
@@ -773,7 +776,7 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
    Note edit cards (Accept / Auto modes)
    ========================================================================== */
 .ai-agent-edit-card {
-  margin: var(--size-4-2) 0;
+  margin: var(--size-4-3) 0;
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-m);
   background: var(--background-primary);
@@ -789,9 +792,11 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 .ai-agent-edit-card-head {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  font-size: var(--font-ui-smaller);
+  gap: 8px;
+  min-height: 40px;
+  box-sizing: border-box;
+  padding: 8px 14px;
+  font-size: var(--font-ui-small);
   color: var(--text-muted);
   background: var(--background-secondary);
   border-bottom: 1px solid var(--background-modifier-border);
@@ -826,34 +831,35 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 .ai-agent-edit-card.is-failed .ai-agent-edit-card-status { color: var(--color-orange); background: rgba(var(--color-orange-rgb), 0.12); }
 .ai-agent-edit-card.is-streaming .ai-agent-edit-card-status { animation: ai-agent-blink 1.2s ease-in-out infinite; }
 .ai-agent-edit-card-diff {
-  max-height: 220px;
+  max-height: 240px;
   overflow: auto;
-  padding: 8px 10px;
+  padding: 12px 14px;
   font-size: var(--font-ui-small);
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
 }
 .ai-agent-edit-card-error {
-  padding: 6px 10px;
+  padding: 8px 14px;
   font-size: var(--font-ui-smaller);
   color: var(--color-orange);
   border-top: 1px solid var(--background-modifier-border);
 }
 .ai-agent-edit-card-actions {
   display: flex;
-  gap: 6px;
-  padding: 6px 10px;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
   border-top: 1px solid var(--background-modifier-border);
 }
 .ai-agent-edit-card-actions button,
 .ai-agent-edit-bulk button {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  height: 26px;
-  padding: 0 10px;
-  font-size: var(--font-ui-smaller);
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  font-size: var(--font-ui-small);
 }
 .ai-agent-edit-card-actions svg { width: 13px; height: 13px; }
 .ai-agent-edit-bulk {
@@ -907,8 +913,8 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
    Agent run inside an assistant message: plan, tool calls, approvals
    ========================================================================== */
 .ai-agent-plan {
-  margin: 2px 0 var(--size-4-2);
-  padding: 8px 10px;
+  margin: var(--size-2-2) 0 var(--size-4-3);
+  padding: 12px 14px;
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-m);
   background: var(--background-primary);
@@ -918,7 +924,7 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 .ai-agent-plan-icon, .ai-agent-plan-mark { display: inline-flex; }
 .ai-agent-plan-icon svg, .ai-agent-plan-mark svg { width: 14px; height: 14px; }
 .ai-agent-plan-count { margin-left: auto; font-weight: normal; color: var(--text-faint); font-variant-numeric: tabular-nums; }
-.ai-agent-plan-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.ai-agent-plan-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .ai-agent-plan-list li { display: flex; align-items: flex-start; gap: 6px; color: var(--text-muted); }
 .ai-agent-plan-list li .ai-agent-plan-mark { margin-top: 2px; color: var(--text-faint); }
 .ai-agent-plan-list li.is-done { color: var(--text-faint); text-decoration: line-through; text-decoration-color: var(--background-modifier-border); }
@@ -926,14 +932,16 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 .ai-agent-plan-list li.is-in_progress { color: var(--text-normal); }
 .ai-agent-plan-list li.is-in_progress .ai-agent-plan-mark { color: var(--interactive-accent); }
 
-.ai-agent-tool { margin: 3px 0; font-size: var(--font-ui-small); color: var(--text-muted); }
+.ai-agent-tool { margin: var(--size-4-2) 0; font-size: var(--font-ui-small); color: var(--text-muted); }
 .ai-agent-tool > summary {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
-  padding: 4px 8px;
-  border-radius: var(--radius-s);
+  min-height: 38px;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border-radius: var(--radius-m);
   background: var(--background-modifier-hover);
   cursor: pointer;
   list-style: none;
@@ -943,7 +951,7 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 .ai-agent-tool.is-empty > summary { cursor: default; }
 .ai-agent-tool > summary:hover { color: var(--text-normal); }
 .ai-agent-tool-icon, .ai-agent-tool-status { display: inline-flex; flex: none; }
-.ai-agent-tool-icon svg, .ai-agent-tool-status svg { width: 13px; height: 13px; }
+.ai-agent-tool-icon svg, .ai-agent-tool-status svg { width: 14px; height: 14px; }
 .ai-agent-tool-label { flex: none; font-weight: var(--font-medium, 500); color: var(--text-normal); }
 .ai-agent-tool-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ai-agent-tool-summary { flex: none; margin-left: auto; color: var(--text-faint); font-size: var(--font-ui-smaller); }
@@ -954,10 +962,10 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 .ai-agent-tool.is-denied .ai-agent-tool-status { color: var(--color-red); }
 .ai-agent-tool.is-running .ai-agent-tool-status svg { animation: ai-agent-spin 900ms linear infinite; }
 .ai-agent-tool.is-running > summary { background: hsla(var(--interactive-accent-hsl), 0.08); }
-.ai-agent-tool-body { padding: 6px 8px 2px 27px; }
-.ai-agent-tool-paths { display: flex; flex-wrap: wrap; gap: 4px; }
+.ai-agent-tool-body { padding: 10px 12px 4px 34px; }
+.ai-agent-tool-paths { display: flex; flex-wrap: wrap; gap: 6px; }
 .ai-agent-tool-path {
-  padding: 1px 6px;
+  padding: 2px 8px;
   border-radius: var(--radius-s);
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
@@ -980,9 +988,10 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 }
 .ai-agent-tool-paths + .ai-agent-tool-result { display: none; }
 .ai-agent-tool-error { color: var(--text-error); font-size: var(--font-ui-smaller); }
-.ai-agent-chat .ai-agent-tool { animation: ai-agent-rise 200ms var(--ai-ease) both; }
+/* parts added to a visible message (keyed repaint): fade in once, never on repaints */
+.ai-agent-msg .is-appearing { animation: ai-agent-rise 200ms var(--ai-ease) both; }
 
-.ai-agent-agent-state { display: flex; align-items: center; gap: 8px; margin: 6px 0 2px; font-size: var(--font-ui-small); color: var(--text-faint); }
+.ai-agent-agent-state { display: flex; align-items: center; gap: 8px; margin: var(--size-4-3) 0 var(--size-2-2); font-size: var(--font-ui-small); color: var(--text-faint); }
 .ai-agent-agent-state.is-waiting_approval { color: var(--text-accent); }
 .ai-agent-agent-state-icon { display: inline-flex; }
 .ai-agent-agent-state-icon svg { width: 14px; height: 14px; }
@@ -999,8 +1008,8 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 .ai-agent-diff-gap { color: var(--text-faint); line-height: 1; margin: 2px 0; }
 .ai-agent-edit-card-actions button.mod-warning { background: var(--background-modifier-error); color: var(--text-on-accent); }
 .ai-agent-changed {
-  margin: 8px 0 2px;
-  padding: 8px 10px;
+  margin: var(--size-4-3) 0 var(--size-2-2);
+  padding: 12px 14px;
   border-radius: var(--radius-m);
   background: rgba(var(--color-green-rgb), 0.07);
   font-size: var(--font-ui-small);
