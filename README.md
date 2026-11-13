@@ -1,8 +1,8 @@
 # Obsidian AI Agent
 
-在 Obsidian 中使用**你自己的大模型**进行对话与写作：侧边栏 AI Chat、选中文本 AI 编辑（带 Diff 预览，确认后才写入）、当前笔记上下文感知。支持任意 OpenAI 兼容接口，包括 DeepSeek、通义千问、智谱 GLM、Kimi、豆包、MiniMax、百川、SiliconFlow、Ollama、LM Studio、OpenAI 等。
+在 Obsidian 中使用**你自己的大模型**：侧边栏 AI Chat 与 Agent（搜索、阅读、整理、修改笔记，执行前可确认）、选中文本 AI 编辑（Diff 预览，确认后才写入）、Copilot 式行内补全、本地语义检索、自定义提示词与 MCP 工具。支持任意 OpenAI 兼容接口，包括 DeepSeek、通义千问、智谱 GLM、Kimi、豆包、MiniMax、百川、SiliconFlow、Ollama、LM Studio、OpenAI 等。
 
-> 需求来源：[`docs/Obsidian-Agent-SRS.md`](docs/Obsidian-Agent-SRS.md)。当前版本 **v0.1.0 = SRS §15 定义的 MVP**。
+> 需求来源：[`docs/Obsidian-Agent-SRS.md`](docs/Obsidian-Agent-SRS.md)。已实现 SRS §15 的 MVP，以及 §18 路线图中 V1.1–V2.0 的主要能力（见文末“实现范围”）。
 
 ## 功能
 
@@ -11,9 +11,14 @@
 | 服务商配置 | 多服务商（新增 / 编辑 / 复制 / 删除 / 设为默认）、服务商预设；只需填写 Endpoint 与 API Key，**连接成功后自动检测可用模型**；Temperature / Max Tokens / Top P / 超时 / 自定义 Header / 流式开关（高级选项）；对话与编辑分别指定服务商 |
 | 密钥安全 | API Key 存入 Obsidian **SecretStorage**（1.11.4+），不写入 `data.json`；日志与错误信息自动脱敏；设置界面默认隐藏 |
 | AI Chat | 侧边栏多轮对话、流式输出、停止 / 重新生成 / 复制 / 插入到笔记、Markdown 渲染与可点击 `[[双链]]`、推理模型“思考过程”折叠显示、快捷提示词、会话历史（新建 / 重命名 / 删除 / 恢复）、导出为笔记；输入框下方切换**服务商、模型、思考强度、模式** |
-| 对话模式 | **Ask** 只问答；**Accept** 模型提出对附带笔记的修改，以 Diff 卡片展示，逐条或全部接受 / 拒绝；**Auto** 修改直接写入，可在卡片上撤销或在编辑器中 Ctrl/Cmd+Z |
-| 上下文 | 当前笔记、选中文本、手动添加任意笔记；输入框上方的附件标签一键开关（悬停查看 Token 估算，超出上限时标橙）；预算截断；**可查看每轮实际发送给模型的内容**；排除敏感文件夹 |
-| AI 编辑 | 重写、润色、扩写、精简、总结、翻译、语法修正、续写、自定义指令；并排 / 行内 Diff 预览；接受 / 拒绝 / 重新生成 / 复制 / 继续修改 |
+| Agent | 模型通过工具访问仓库：搜索（关键词 / 语义）、读取笔记、列出文件、反向链接与出链、新建 / 修改 / 追加 / 移动 / 删除笔记；显示执行计划与每一步工具调用；写入前的 Diff 卡片与确认（允许 / 本次任务全部允许 / 拒绝）、撤销与全部撤销；最大轮次、工具调用次数、文件操作数与时长限制；不支持工具调用的模型自动退回普通对话 |
+| 对话模式 | **Ask** 只读（问答、检索仓库）；**Accept** 每次写入前确认；**Auto** 直接写入、可撤销，删除仍需确认 |
+| 上下文 | 当前笔记、选中文本、关联笔记（出链与反向链接）、手动添加任意笔记；附件标签一键开关（悬停查看 Token 估算）；预算截断；**可查看每轮实际发送给模型的内容**；排除敏感文件夹 |
+| AI 编辑 | 重写、润色、扩写、精简、总结、翻译、语法修正、续写、改变语气、解释、生成大纲、转为表格、整理格式、提取关键词、自定义指令、我的提示词；并排 / 行内 Diff；接受 / 拒绝 / 重新生成 / 复制 / 继续修改 |
+| 行内补全 | 输入停顿后以灰色文字给出续写建议，Tab 接受、Esc 忽略、Ctrl/Cmd+→ 接受一个词；防抖、取消过期请求、缓存；默认关闭 |
+| 提示词 | 提示词即 Markdown 笔记（默认文件夹 `AI Prompts`），可用于对话、AI 编辑或作为对话默认角色；支持变量、指定服务商与模型；每个提示词注册为命令，可绑定快捷键 |
+| 语义检索 | 本地向量索引（按标题与段落切分、增量更新），Agent 可调用 `semantic_search`；默认关闭 |
+| MCP | 接入 MCP 服务（本地命令或 HTTP），其工具供 Agent 调用；按服务设置只读 / 需要确认 |
 | 编辑安全 | 未确认不写入；通过 Editor API 写入，可 Ctrl/Cmd+Z 撤销；生成期间原文被改动、删除或无法唯一定位时**拒绝写入**；笔记关闭或重命名后仍写入正确文件；按 Markdown 结构插入，不破坏标题、列表、Callout |
 
 ## 安装
@@ -73,11 +78,41 @@ MODEL_IDS=GLM-4.5-Flash,Qwen3.6-Flash,Kimi-K2.7 npm run seed
 - 用户消息下方的 📎 可查看该轮**实际发送给模型的上下文**。
 - ✨ 打开快捷提示词：总结当前笔记、提取知识点、生成大纲、解释选中内容等。
 
-### 在对话中修改笔记（Accept / Auto）
-1. 把模式切换为 Accept 或 Auto，确认要修改的笔记出现在输入框上方的附件标签中。
-2. 直接提出要求，例如“在待办里加一条……”“把第 4 步写得更具体”。
-3. 回答中的每处修改显示为一张卡片（文件名、+/− 字数、行内 Diff）：Accept 模式下点“接受 / 拒绝”或“全部接受”；Auto 模式下已自动写入，可点“撤销”。
-4. 修改通过编辑器写入（笔记已打开时可 Ctrl/Cmd+Z 撤销），笔记未打开时原子写入文件。后续对话会告诉模型哪些修改被接受、拒绝或撤销。
+### Agent：搜索、整理和修改笔记
+启用“设置 → Agent → 启用仓库工具”（默认开启）后，对话中的模型可以自己调用工具：
+
+- **问答**（任意模式）：“我之前的笔记里有没有记录过向量数据库的索引类型？”——模型会搜索、阅读相关笔记，再用 `[[笔记名]]` 标注来源回答。
+- **多步任务**（Accept / Auto）：“找出所有与 AI Agent 相关的笔记，整理成综述保存为 `AI/综述.md`”——回答上方显示执行计划，每个工具调用可展开查看结果和用到的笔记。
+- **写入确认**：Accept 模式下每次新建、修改、移动都会显示 Diff 卡片，选择“允许”“本次任务全部允许”或“拒绝”；删除在任何模式下都要确认，且只会移到回收站。
+- **撤销**：已写入的卡片可以“撤销 / 重新应用”，修改多个文件时还有“全部撤销”。笔记已打开时通过编辑器写入，也可以 Ctrl/Cmd+Z。
+- **限制**：最大执行轮次（默认 20）、单次任务最大文件操作数（默认 10）、工具调用次数与执行时长都有上限，达到后停止并总结；随时可以点“停止”。
+- 模型不支持工具调用时，会自动改用普通对话，此时 Accept / Auto 只能修改本轮附带的笔记（修改以卡片形式给出）。
+
+### 行内补全
+设置 → 行内补全中开启（或点状态栏的“补全”、命令“切换 AI 行内补全”），并选择一个响应快的模型。写作时停顿片刻，光标处出现灰色建议：**Tab** 接受、**Esc** 忽略、**Ctrl/Cmd+→** 接受一个词，继续输入相同的文字会保留剩余建议。在代码块、Frontmatter、行中间和排除的文件夹中不会触发；命令“立即请求 AI 行内补全”可手动触发。
+
+### 提示词
+在提示词文件夹（默认 `AI Prompts`）中新建笔记即可添加提示词，或在 ✨ 列表 / 设置中点“新建提示词”：
+
+```markdown
+---
+name: 周报整理
+description: 把选中的要点整理成周报
+scope: edit          # chat | edit | both | system（作为对话默认角色）
+mode: replace        # AI 编辑时：replace | insert-after | insert-at-cursor
+context: auto        # 对话时附带：auto | current-file | selection | none
+model: deepseek-chat # 可选；provider 也可指定
+---
+把 {{selection}} 整理成一份周报，语气正式。{{user_instruction}}
+```
+
+支持的变量：`{{selection}}` `{{current_file}}` `{{cursor_context}}` `{{vault_context}}` `{{user_instruction}}`（使用时会询问补充说明）`{{date}}` `{{title}}` `{{language}}`。提示词出现在 ✨ 列表和 AI 编辑面板的“我的提示词”中，每个都注册为命令“提示词：名称”，可在“设置 → 快捷键”中绑定。
+
+### 语义检索
+设置 → 语义检索中开启，选择 Embedding 服务商和模型（例如 `text-embedding-3-small`、`GLM-Embedding-3`），点“更新索引”。索引保存在插件目录中，笔记修改后会自动增量更新；Agent 会在关键词不确定时调用 `semantic_search`。
+
+### MCP 服务
+设置 → MCP 服务 → 添加：本地服务填写启动命令与参数（例如 `npx -y @modelcontextprotocol/server-everything`），远程服务填写 URL 与请求头，点“测试连接”查看工具列表。环境变量和请求头保存在安全存储中。“只读”服务的工具在所有模式下直接执行；其他服务在 Ask 模式不可用，Accept 模式每次调用前显示参数并确认。
 
 ### AI 编辑
 1. 在编辑器中选中文本（续写和自定义生成可以不选）。
@@ -94,14 +129,20 @@ MODEL_IDS=GLM-4.5-Flash,Qwen3.6-Flash,Kimi-K2.7 npm run seed
 | 打开 AI Chat / 新建 AI 会话 | 侧边栏对话 |
 | AI 总结当前笔记 / AI 解释选中内容 | 在 Chat 中带上下文提问 |
 | AI 编辑（选中文本或光标处） | 打开 AI 编辑面板 |
-| AI 重写 / 润色 / 扩写 / 精简 / 总结 / 翻译 / 语法修正 选中文本、AI 续写 | 直接执行对应操作 |
+| AI 重写 / 润色 / 扩写 / 精简 / 总结 / 翻译 / 语法修正 / 改变语气 / 解释 / 生成大纲 / 转为表格 / 整理格式 / 提取关键词、AI 续写 | 直接执行对应操作 |
+| 提示词：<名称> | 运行自定义提示词（AI 编辑或对话） |
+| 切换 / 立即请求 / 接受 / 忽略 AI 行内补全 | 行内补全 |
+| 更新语义索引 / 重建语义索引 | 语义检索 |
 | 停止 AI 生成 | 停止所有正在进行的生成 |
 
 ## 数据与隐私
 
 - 配置：`.obsidian/plugins/obsidian-ai-agent/data.json`（不含 API Key）。
 - 会话：`.obsidian/plugins/obsidian-ai-agent/data/sessions/*.json`，只保存在本地。
-- 只有附件标签中显示的内容会被发送，插件不会自动上传整个仓库；“排除的文件夹”中的笔记永远不会被发送。
+- 语义索引：`.obsidian/plugins/obsidian-ai-agent/data/rag-index.json`。
+- 只有附件标签中显示的内容、以及 Agent 工具实际读取的笔记会被发送；所有工具调用都显示在回答中。“排除的文件夹”和配置目录对上下文、工具、语义索引与行内补全都不可见。
+- 开启行内补全后，写作时会发送光标附近的文本；开启语义检索后，首次索引会把未排除笔记的片段发送给 Embedding 服务。两者默认关闭。
+- MCP 服务的环境变量与请求头、API Key 都保存在 SecretStorage 中。
 - 笔记内容放在 `<context>` 定界符内，系统提示词要求模型把它当作数据而非指令，以防范 Prompt Injection。
 
 ## 开发
@@ -142,23 +183,34 @@ src/
 │   ├── context-manager.ts     上下文排序、预算、定界
 │   ├── token-manager.ts       Token 估算与截断
 │   └── prompt-manager.ts      内置 Prompt 与编辑操作
+├── agent/                     Agent：工具（schema 校验、路径规则）、关键词搜索、执行循环、变更应用 / 撤销、VaultPort
 ├── chat/                      会话模型与存储、ChatController、对话选项、模型目录、笔记修改解析
-├── editor/                    Diff、编辑定位与冲突检测、EditSession、EditManager
-├── context/                   Obsidian 上下文采集
+├── editor/                    Diff、编辑定位与冲突检测、EditSession、EditManager、行内补全（CodeMirror 6）
+├── prompts/                   自定义提示词（解析、渲染、命令注册）
+├── rag/                       语义索引：切分、增量同步、余弦检索
+├── mcp/                       MCP 客户端（stdio / Streamable HTTP）与服务管理
+├── context/                   Obsidian 上下文采集（含关联笔记）
 ├── settings/                  设置模型、SecretStorage 密钥、设置页
-└── ui/                        Chat 视图、AI 编辑面板、Diff 预览、各类对话框
-tests/                         单元测试；tests/live 为真实接口测试
+└── ui/                        Chat 视图、Agent 步骤渲染、AI 编辑面板、Diff 预览、上拉列表等组件
+tests/                         单元测试（含内存 Vault 与 MCP 测试服务）；tests/live 为真实接口测试
 ```
 
-## MVP 范围与后续计划
+## 实现范围
 
-本版本实现了 SRS §15.1 / §17 的全部 MVP 条目。以下内容按 SRS §15.2 / §18 留待后续版本：
-
-- Agent 工具调用（search_vault / read_file / create_file …）与执行计划面板（V1.3–V1.4）；目前 Accept / Auto 模式只能修改本轮附带的笔记，不能新建文件
-- Vault 搜索、反向链接 / 出链上下文、RAG 向量检索（V1.2 / V2.0）
-- 行内 Ghost Text 自动补全（V1.5）
-- 自定义 Prompt 模板管理（以 Markdown 文件保存）、MCP、Skills（V1.1 / V2.0）
-- Anthropic / Gemini 原生协议适配器（目前可通过它们的 OpenAI 兼容端点接入）
+| SRS | 内容 | 状态 |
+|---|---|---|
+| §15 MVP / §17 | LLM 配置、Chat、上下文、AI 编辑、Diff 预览、本地存储 | ✅ |
+| V1.1 | 多模型路由（对话 / 编辑 / 补全 / Embedding）、Prompt 管理（Markdown 文件、变量、命令与快捷键） | ✅ |
+| V1.2 | Vault 搜索（文件名、路径、标题、标签、属性、正文、文件夹范围）、反向链接 / 出链、关联笔记上下文 | ✅ |
+| V1.3 | Agent Tool Calling：工具注册、参数校验、权限检查、状态机、执行限制、中止 | ✅ |
+| V1.4 | 多文件编辑、执行计划、单步确认 / 本次任务全部允许、修改文件列表、撤销 | ✅ |
+| V1.5 | Inline Completion（Ghost Text、Tab / Esc） | ✅ |
+| V2.0 | RAG（本地向量索引）、MCP（stdio / HTTP） | ✅ |
+| V2.0 | 自定义 Skills、Agent 工作流 | ⏳ 未实现 |
+| V2.1 | 多 Agent 协作 | ⏳ 未实现 |
+| §4.9.3 | 批量操作先生成整体计划、一次性预览全部修改再执行 | ⚠️ 部分：目前逐个修改确认，或选择“本次任务全部允许” |
+| §7.3 | Anthropic / Gemini 原生协议适配器 | ⏳ 未实现（可通过它们的 OpenAI 兼容端点接入） |
+| §10.4 | 移动端 | ⚠️ 未测试；MCP 本地服务仅限桌面端 |
 
 ## License
 
