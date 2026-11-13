@@ -1,5 +1,6 @@
 import type { ContextKind } from "../core/context-manager";
 import type { ReasoningEffort, Usage } from "../providers/base/provider.types";
+import type { NoteEditRecord } from "./note-edits";
 
 /** How far the chat may go with notes: answer only, propose edits for review, or apply them. */
 export type ChatMode = "ask" | "accept" | "auto";
@@ -33,6 +34,10 @@ export interface ChatMessage {
   providerId?: string;
   modelName?: string;
   usage?: Usage;
+  /** Assistant messages: chat mode the reply was generated in. */
+  mode?: ChatMode;
+  /** Assistant messages: state of the note edits it proposed (Accept / Auto). */
+  edits?: NoteEditRecord[];
 }
 
 export interface ChatSession {

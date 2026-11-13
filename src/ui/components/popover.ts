@@ -1,4 +1,5 @@
 import { Scope, setIcon, type App } from "obsidian";
+import { setIconAny } from "./icons";
 import { animateOut } from "./motion";
 import { placeAbove } from "./popover-placement";
 import { matchesQuery } from "./popover-filter";
@@ -7,7 +8,8 @@ export interface PopoverItem {
   type?: "item";
   id: string;
   title: string;
-  icon?: string;
+  /** Lucide name, or several to fall back through. */
+  icon?: string | string[];
   subtitle?: string;
   /** Renders the subtitle as a warning (e.g. missing API key). */
   warn?: boolean;
@@ -23,7 +25,7 @@ export interface PopoverItem {
 export interface PopoverNote {
   type: "note";
   text: string;
-  icon?: string;
+  icon?: string | string[];
   warn?: boolean;
   loading?: boolean;
 }
@@ -209,7 +211,7 @@ export class Popover {
       if (entry.type === "note") {
         const note = list.createDiv({ cls: `ai-agent-popover-note${entry.warn ? " is-warning" : ""}${entry.loading ? " is-loading" : ""}` });
         const icon = entry.loading ? "loader-2" : entry.icon;
-        if (icon) setIcon(note.createSpan({ cls: "ai-agent-popover-icon" }), icon);
+        if (icon) setIconAny(note.createSpan({ cls: "ai-agent-popover-icon" }), [icon].flat());
         note.createSpan({ text: entry.text });
         continue;
       }
@@ -218,7 +220,7 @@ export class Popover {
         cls: `ai-agent-popover-item${entry.checked ? " is-checked" : ""}`,
         attr: { role: "option", "aria-selected": String(!!entry.checked), id: `${this.el!.id}-${index}` },
       });
-      if (entry.icon) setIcon(row.createSpan({ cls: "ai-agent-popover-icon" }), entry.icon);
+      if (entry.icon) setIconAny(row.createSpan({ cls: "ai-agent-popover-icon" }), [entry.icon].flat());
       const text = row.createDiv({ cls: "ai-agent-popover-text" });
       const titleLine = text.createDiv({ cls: "ai-agent-popover-title-line" });
       titleLine.createSpan({ cls: "ai-agent-popover-title", text: entry.title });

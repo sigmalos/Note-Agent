@@ -26,6 +26,42 @@ export const CHAT_SYSTEM_PROMPT = `你是集成在 Obsidian 中的 AI 知识助�
 
 ${SAFETY_RULES}`;
 
+/* ------------------------------ Chat modes ------------------------------ */
+
+export type ChatModeId = "ask" | "accept" | "auto";
+
+const NOTE_EDIT_FORMAT = `需要修改笔记时，在回答中输出修改块（可以有多个），格式严格如下：
+
+\`\`\`\`note-edit path="笔记路径.md"
+<<<<<<< SEARCH
+笔记中要被替换的原文
+=======
+替换后的新内容
+>>>>>>> REPLACE
+\`\`\`\`
+
+规则：
+- path 必须是 <context> 中某个 <document> 的 path 属性，不能修改其他文件，也不能新建文件。
+- SEARCH 必须逐字复制笔记原文（包括空格、标点和 Markdown 符号），不要用省略号代替；尽量简短，但要保证在笔记中只出现一次。
+- 要在笔记末尾追加内容时，SEARCH 部分留空。
+- 每个 SEARCH/REPLACE 只改一处连续的文本；多处修改请分别给出。外层用四个反引号，这样内容里可以包含代码块。
+- 在修改块之外用一两句话说明改了什么，不要再完整重复整篇笔记。
+- 只有在用户要求修改、整理、补充或续写笔记时才输出修改块；单纯提问时正常回答。`;
+
+export function chatModeInstructions(mode: ChatModeId, editablePaths: string[]): string {
+  if (mode === "ask") {
+    return `当前为 Ask（问答）模式：你只能回答问题，不能修改任何笔记，也不要输出 note-edit 修改块或声称已经修改了笔记。如果用户希望修改笔记，可以给出建议的文字，并提示用户把输入框下方的模式切换为 Accept 或 Auto，以便你直接修改。`;
+  }
+  const paths = editablePaths.length
+    ? `本轮可以修改的笔记：${editablePaths.map((p) => `"${p}"`).join("、")}。`
+    : "本轮没有附带任何笔记，因此不能修改笔记；如果用户要求修改，请提示他先把笔记添加为上下文。";
+  const how =
+    mode === "accept"
+      ? "当前为 Accept 模式：你的修改会先以对比预览展示给用户，由用户逐条接受后才写入笔记。"
+      : "当前为 Auto 模式：你的修改会被直接写入笔记（用户可以撤销），请确保修改准确、克制。";
+  return `${how}${paths}\n\n${NOTE_EDIT_FORMAT}`;
+}
+
 export const EDIT_SYSTEM_PROMPT = `你是 Obsidian 中的专业写作与编辑助手。你会收到一段待处理的 Markdown 文本及其周边上下文，请严格按照任务要求处理。
 
 输出要求：

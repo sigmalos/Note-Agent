@@ -1,10 +1,12 @@
 import { Component, ItemView, Keymap, MarkdownRenderer, Notice, TFile, setIcon, type WorkspaceLeaf } from "obsidian";
 import { ChatController } from "../chat/chat-manager";
-import { EFFORT_OPTIONS, effortOption, modelChoices } from "../chat/chat-options";
+import { EFFORT_OPTIONS, MODE_OPTIONS, effortOption, modeOption, modelChoices } from "../chat/chat-options";
+import { noteEditsOf, parseNoteEdits, resolveEditPath, stripNoteEdits, type NoteEditBlock, type NoteEditRecord } from "../chat/note-edits";
 import { createSession, sessionToMarkdown, type SessionOptions } from "../chat/session-manager";
 import type { ChatMessage, ChatSession } from "../chat/types";
 import { VIEW_TYPE_CHAT } from "../constants";
 import { buildContext, type BuiltContext, type ContextItem } from "../core/context-manager";
+import { diffStats, diffText } from "../editor/diff";
 import { QUICK_PROMPTS } from "../core/prompt-manager";
 import { estimateTokens } from "../core/token-manager";
 import type AIAgentPlugin from "../main";
@@ -64,6 +66,7 @@ export class ChatView extends ItemView {
   private providerPicker!: Picker;
   private modelPicker!: Picker;
   private effortPicker!: Picker;
+  private modePicker!: Picker;
   private promptsPicker!: Picker;
   private sendBtn!: HTMLButtonElement;
   private rendered = new Map<string, RenderedMessage>();
@@ -244,8 +247,10 @@ export class ChatView extends ItemView {
       search: { placeholder: "搜索模型…", minItems: 8 },
     });
     this.modelPicker.btn.addClass("is-model");
-    this.effortPicker = this.picker(pickers, "思考强度", () => this.effortEntries(), { minWidth: 240 });
+    this.effortPicker = this.picker(pickers, "思考强度", () => this.effortEntries(), { minWidth: 250, cls: "is-wrapping" });
     this.effortPicker.btn.addClass("is-effort");
+    this.modePicker = this.picker(pickers, "模式", () => this.modeEntries(), { minWidth: 270, cls: "is-wrapping" });
+    this.modePicker.btn.addClass("is-mode");
     footer.createDiv({ cls: "ai-agent-spacer" });
     this.sendBtn = footer.createEl("button", { cls: "mod-cta ai-agent-send" });
     footer.addEventListener("click", (e) => {
@@ -372,7 +377,7 @@ export class ChatView extends ItemView {
   }
 
   private pickers(): Picker[] {
-    return [this.promptsPicker, this.providerPicker, this.modelPicker, this.effortPicker].filter(Boolean);
+    return [this.promptsPicker, this.providerPicker, this.modelPicker, this.effortPicker, this.modePicker].filter(Boolean);
   }
 
   private setPickerLabel(p: Picker, icons: string[], text: string, tooltip: string): void {
@@ -417,6 +422,9 @@ export class ChatView extends ItemView {
     this.setPickerLabel(this.modelPicker, ["box", "cpu"], model || "未配置", `模型：${model || "未配置"}`);
     const effort = effortOption(this.session.effort);
     this.setPickerLabel(this.effortPicker, ["brain", "lightbulb"], effort.short, `思考强度：${effort.title}（${effort.description}）`);
+    const mode = modeOption(this.session.mode);
+    this.setPickerLabel(this.modePicker, mode.icons, mode.short, `模式：${mode.title}（${mode.description}）`);
+    for (const o of MODE_OPTIONS) this.modePicker.btn.toggleClass(`is-mode-${o.id}`, o.id === mode.id);
   }
 
   private async changeSession(patch: SessionOptions, picker: Picker): Promise<void> {
@@ -500,7 +508,7 @@ export class ChatView extends ItemView {
       ...EFFORT_OPTIONS.map(
         (o): PopoverEntry => ({
           id: o.id,
-          icon: o.icons[0],
+          icon: o.icons,
           title: o.title,
           subtitle: o.description,
           checked: o.id === current,
@@ -509,6 +517,25 @@ export class ChatView extends ItemView {
       ),
       { type: "separator" },
       { type: "note", icon: "info", text: "以 reasoning_effort 发送；不支持的模型会自动忽略" },
+    ];
+  }
+
+  private modeEntries(): PopoverEntry[] {
+    const current = modeOption(this.session.mode).id;
+    return [
+      { type: "label", text: "模式" },
+      ...MODE_OPTIONS.map(
+        (o): PopoverEntry => ({
+          id: o.id,
+          icon: o.icons,
+          title: o.title,
+          subtitle: o.description,
+          checked: o.id === current,
+          onSelect: () => void this.changeSession({ mode: o.id }, this.modePicker),
+        }),
+      ),
+      { type: "separator" },
+      { type: "note", icon: ["shield-check", "info"], text: "只会修改本轮附带的笔记；Auto 模式的修改可在消息中撤销，也可在编辑器中 Ctrl/Cmd+Z" },
     ];
   }
 
@@ -543,6 +570,7 @@ export class ChatView extends ItemView {
       save: (sess) => this.plugin.sessions.save(sess),
       onUpdate: (sess, msg) => this.onMessageUpdate(sess, msg),
       historyBudget: () => Math.max(2000, Math.floor(this.plugin.settings.maxContextTokens / 2)),
+      afterReply: (sess, msg) => this.afterReply(sess, msg),
     });
     for (const r of this.rendered.values()) r.component.unload();
     this.rendered.clear();
@@ -630,6 +658,8 @@ export class ChatView extends ItemView {
 
   private onRename(newPath: string, oldPath: string): void {
     this.attachedPaths = this.attachedPaths.map((p) => (p === oldPath ? newPath : p));
+    // Keep proposed / applied chat edits pointing at the note.
+    for (const m of this.session.messages) for (const r of m.edits ?? []) if (r.path === oldPath) r.path = newPath;
     this.refreshContextBar(true);
   }
 
@@ -893,10 +923,20 @@ export class ChatView extends ItemView {
           if (!details.open) window.requestAnimationFrame(() => flash(rBody, "is-revealing"));
         });
       }
-      const body = el.createDiv({ cls: "ai-agent-msg-body markdown-rendered" });
+      const body = el.createDiv({ cls: "ai-agent-msg-body" });
       if (msg.content) {
         const sourcePath = this.plugin.context.snapshot()?.file.path ?? "";
-        void MarkdownRenderer.render(this.app, msg.content, body, sourcePath, r.component);
+        const canEdit = msg.mode === "accept" || msg.mode === "auto";
+        const segments = canEdit ? parseNoteEdits(msg.content) : [{ type: "text" as const, text: msg.content }];
+        for (const seg of segments) {
+          if (seg.type === "edit") {
+            this.renderEditCard(body, msg, seg.edit);
+            continue;
+          }
+          // One container per segment keeps text and edit cards in order (render is async).
+          const part = body.createDiv({ cls: "markdown-rendered ai-agent-msg-markdown" });
+          void MarkdownRenderer.render(this.app, seg.text, part, sourcePath, r.component);
+        }
       } else if (msg.status === "streaming") {
         if (!msg.reasoning) {
           const typing = body.createDiv({ cls: "ai-agent-typing", attr: { "aria-label": "正在等待模型响应" } });
@@ -916,16 +956,26 @@ export class ChatView extends ItemView {
   }
 
   private renderAssistantActions(el: HTMLElement, msg: ChatMessage): void {
+    const pending = (msg.edits ?? []).filter((r) => r.status === "pending");
+    if (pending.length > 1) {
+      const bulk = el.createDiv({ cls: "ai-agent-edit-bulk" });
+      bulk.createSpan({ text: `${pending.length} 处修改待确认` });
+      const accept = bulk.createEl("button", { cls: "mod-cta", text: "全部接受" });
+      accept.addEventListener("click", () => void this.resolveAll(msg, "accept"));
+      const reject = bulk.createEl("button", { text: "全部拒绝" });
+      reject.addEventListener("click", () => void this.resolveAll(msg, "reject"));
+    }
     const actions = el.createDiv({ cls: "ai-agent-msg-actions" });
     const isLast = this.session.messages[this.session.messages.length - 1]?.id === msg.id;
     if (msg.content) {
       this.iconButton(actions, "copy", "复制回答", async (e) => {
         const btn = e.currentTarget as HTMLElement;
-        await navigator.clipboard.writeText(msg.content);
+        await navigator.clipboard.writeText(msg.edits?.length ? stripNoteEdits(msg.content) : msg.content);
         this.confirmButton(btn, "已复制");
       });
       this.iconButton(actions, "file-input", "插入到笔记光标处", (e) => {
-        if (this.plugin.insertIntoNote(msg.content)) this.confirmButton(e.currentTarget as HTMLElement, "已插入");
+        const text = msg.edits?.length ? stripNoteEdits(msg.content) : msg.content;
+        if (this.plugin.insertIntoNote(text)) this.confirmButton(e.currentTarget as HTMLElement, "已插入");
       });
     }
     if (isLast) {
@@ -935,6 +985,161 @@ export class ChatView extends ItemView {
       });
     }
     if (msg.usage?.totalTokens) actions.createSpan({ cls: "ai-agent-msg-usage", text: `${msg.usage.totalTokens} tokens` });
+  }
+
+  /* ------------------------------ note edits ----------------------------- */
+
+  /** Notes the turn before `msg` attached: the only ones its edits may touch. */
+  private editablePathsFor(session: ChatSession, msg: ChatMessage): string[] {
+    const i = session.messages.indexOf(msg);
+    for (let j = i - 1; j >= 0; j--) {
+      const m = session.messages[j];
+      if (m.role === "user") return (m.attachments ?? []).filter((a) => a.path && !a.omitted).map((a) => a.path!);
+    }
+    return [];
+  }
+
+  /** After a reply: register its edits; in Auto mode write them right away. */
+  private async afterReply(session: ChatSession, msg: ChatMessage): Promise<void> {
+    if (msg.mode !== "accept" && msg.mode !== "auto") return;
+    const blocks = noteEditsOf(msg.content).filter((b) => b.complete);
+    if (!blocks.length) return;
+    const allowed = this.editablePathsFor(session, msg);
+    msg.edits = blocks.map((b): NoteEditRecord => {
+      const path = resolveEditPath(b.path, allowed);
+      return path
+        ? { index: b.index, path, status: "pending" }
+        : { index: b.index, path: b.path || "（未指定笔记）", status: "failed", error: "该笔记不在本轮附带的上下文中，未修改。" };
+    });
+    // A stopped reply may be cut short: never auto-apply it, let the user decide.
+    if (msg.mode !== "auto" || msg.status !== "done") return;
+    let applied = 0;
+    for (const rec of msg.edits) if (rec.status === "pending" && (await this.writeEdit(msg, rec))) applied++;
+    if (applied) new Notice(`Auto 模式：已修改 ${applied} 处，可在对话中撤销。`);
+  }
+
+  private blockOf(msg: ChatMessage, index: number): NoteEditBlock | undefined {
+    return noteEditsOf(msg.content).find((b) => b.index === index);
+  }
+
+  private async writeEdit(msg: ChatMessage, rec: NoteEditRecord): Promise<boolean> {
+    const block = this.blockOf(msg, rec.index);
+    if (!block) return false;
+    const res = await this.plugin.edits.replaceInNote(rec.path, block.search, block.replace);
+    if (res.ok) {
+      Object.assign(rec, { status: "applied", anchor: res.anchor, replaced: res.replaced, error: undefined });
+      return true;
+    }
+    Object.assign(rec, { status: "failed", error: res.reason });
+    return false;
+  }
+
+  private async revertEdit(rec: NoteEditRecord): Promise<void> {
+    if (!rec.anchor) return;
+    const res = await this.plugin.edits.revertInNote(rec.path, rec.anchor, rec.replaced ?? "");
+    if (res.ok) Object.assign(rec, { status: "reverted", anchor: undefined, error: undefined });
+    else new Notice(res.reason);
+  }
+
+  /** Run a card action, then persist and repaint that message. */
+  private async onEditAction(msg: ChatMessage, rec: NoteEditRecord, action: "accept" | "reject" | "undo" | "retry"): Promise<void> {
+    if (action === "accept" || action === "retry") {
+      const ok = await this.writeEdit(msg, rec);
+      new Notice(ok ? "已写入笔记，可撤销。" : `未写入：${rec.error ?? ""}`);
+    } else if (action === "reject") rec.status = "rejected";
+    else await this.revertEdit(rec);
+    await this.persistMessage(msg);
+    const card = this.rendered.get(msg.id)?.el.querySelector(`[data-edit="${rec.index}"]`);
+    flash(card as HTMLElement | null, rec.status === "failed" ? "is-shaking" : "is-resolved");
+  }
+
+  private async resolveAll(msg: ChatMessage, action: "accept" | "reject"): Promise<void> {
+    let ok = 0;
+    let failed = 0;
+    for (const rec of msg.edits ?? []) {
+      if (rec.status !== "pending") continue;
+      if (action === "reject") rec.status = "rejected";
+      else if (await this.writeEdit(msg, rec)) ok++;
+      else failed++;
+    }
+    if (action === "accept") new Notice(failed ? `已写入 ${ok} 处，${failed} 处未能写入。` : `已写入 ${ok} 处修改。`);
+    await this.persistMessage(msg);
+  }
+
+  private async persistMessage(msg: ChatMessage): Promise<void> {
+    const r = this.rendered.get(msg.id);
+    if (r) this.paint(msg, r);
+    await this.plugin.sessions.save(this.session);
+  }
+
+  private openNote(path: string): void {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (file instanceof TFile) void this.app.workspace.getLeaf(false).openFile(file);
+  }
+
+  private renderEditCard(parent: HTMLElement, msg: ChatMessage, block: NoteEditBlock): void {
+    const rec = msg.edits?.find((r) => r.index === block.index);
+    const streaming = msg.status === "streaming";
+    const state = rec?.status ?? (streaming ? "streaming" : block.complete ? "pending" : "incomplete");
+    const card = parent.createDiv({ cls: `ai-agent-edit-card is-${state}`, attr: { "data-edit": String(block.index) } });
+
+    const head = card.createDiv({ cls: "ai-agent-edit-card-head" });
+    setIconAny(head.createSpan({ cls: "ai-agent-edit-card-icon" }), block.search.trim() ? ["file-pen-line", "file-edit", "pencil"] : ["file-plus", "plus"]);
+    const path = rec?.path ?? block.path;
+    const name = head.createEl("a", { cls: "ai-agent-edit-card-file", text: path.split("/").pop()?.replace(/\.md$/, "") || "（未指定笔记）" });
+    name.setAttr("aria-label", path);
+    name.addEventListener("click", (e) => {
+      e.preventDefault();
+      this.openNote(path);
+    });
+    if (!block.search.trim()) head.createSpan({ cls: "ai-agent-edit-card-kind", text: "追加到末尾" });
+    const parts = diffText(block.search, block.replace);
+    if (block.complete) {
+      const st = diffStats(parts);
+      const stats = head.createSpan({ cls: "ai-agent-edit-card-stats" });
+      if (st.inserted) stats.createSpan({ cls: "is-ins", text: `+${st.inserted}` });
+      if (st.deleted) stats.createSpan({ cls: "is-del", text: `−${st.deleted}` });
+    }
+    const STATUS: Record<string, string> = {
+      streaming: "生成中…",
+      pending: msg.mode === "auto" ? "未自动写入" : "待确认",
+      applied: "已写入",
+      rejected: "已拒绝",
+      reverted: "已撤销",
+      failed: "未写入",
+      incomplete: "未完成",
+    };
+    head.createSpan({ cls: "ai-agent-edit-card-status", text: STATUS[state] });
+
+    const diff = card.createDiv({ cls: "ai-agent-edit-card-diff" });
+    if (!block.complete) {
+      if (block.replace) diff.createSpan({ cls: "ai-agent-diff-ins", text: block.replace });
+      else diff.createSpan({ cls: "ai-agent-diff-placeholder", text: "正在生成修改…" });
+    } else {
+      for (const part of parts) {
+        const cls = part.op === "insert" ? "ai-agent-diff-ins" : part.op === "delete" ? "ai-agent-diff-del" : "";
+        diff.createSpan({ cls, text: part.text });
+      }
+    }
+    if (rec?.error && rec.status === "failed") card.createDiv({ cls: "ai-agent-edit-card-error", text: rec.error });
+
+    if (!rec || streaming) return;
+    const actions = card.createDiv({ cls: "ai-agent-edit-card-actions" });
+    const btn = (icon: string, text: string, action: "accept" | "reject" | "undo" | "retry", cta = false) => {
+      const b = actions.createEl("button", { cls: cta ? "mod-cta" : "" });
+      setIconAny(b.createSpan(), [icon, "undo", "rotate-ccw"]);
+      b.createSpan({ text });
+      b.addEventListener("click", () => {
+        b.disabled = true;
+        void this.onEditAction(msg, rec, action);
+      });
+    };
+    if (rec.status === "pending") {
+      btn("check", "接受", "accept", true);
+      btn("x", "拒绝", "reject");
+    } else if (rec.status === "applied") btn("undo-2", "撤销", "undo");
+    else if (rec.status === "failed" && this.blockOf(msg, rec.index) && resolveEditPath(rec.path, this.editablePathsFor(this.session, msg))) btn("refresh-cw", "重试", "retry");
+    else if (rec.status === "reverted" || rec.status === "rejected") btn("check", "重新应用", "accept");
   }
 
   private onMessagesClick(evt: MouseEvent): void {

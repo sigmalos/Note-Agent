@@ -5,7 +5,14 @@ import type AIAgentPlugin from "../main";
 import { DiffPreviewModal } from "../ui/diff-modal";
 import { EditPromptModal } from "../ui/edit-modal";
 import { EditSession, type EditTask } from "./edit-session";
-import { locateTarget, makeAnchor, type LocateResult } from "./edit-target";
+import { appendText, findTarget } from "../chat/note-edits";
+import { locateTarget, makeAnchor, type EditAnchor, type LocateResult } from "./edit-target";
+
+/** `replaced`: the text that was overwritten (needed to undo). */
+export type NoteWriteResult = { ok: true; anchor: EditAnchor; replaced: string } | { ok: false; reason: string };
+
+/** Pick a range in the current text and what to write there, or refuse. */
+type Planner = (doc: string) => { ok: true; from: number; to: number; text: string } | { ok: false; reason: string };
 
 /**
  * Orchestrates AI edits in the editor (SRS §4.4.3):
@@ -144,6 +151,57 @@ export class EditManager {
       const from = task.mode === "insert-after" ? loc.to : loc.from;
       const to = insertOnly ? from : loc.to;
       return data.slice(0, from) + text + data.slice(to);
+    });
+    return result;
+  }
+
+  /**
+   * Chat edit (Accept / Auto): replace the unique occurrence of `search` with `replace`, or
+   * append when `search` is empty. Returns an anchor of the written text for undo.
+   */
+  replaceInNote(path: string, search: string, replace: string): Promise<NoteWriteResult> {
+    return this.writeNote(path, (doc) => {
+      const m = findTarget(doc, search);
+      if (!m.ok) return m;
+      return { ok: true, from: m.from, to: m.to, text: m.append ? appendText(doc, replace) : replace };
+    });
+  }
+
+  /** Undo a chat edit: put `original` back where the anchor's text now is. */
+  revertInNote(path: string, anchor: EditAnchor, original: string): Promise<NoteWriteResult> {
+    return this.writeNote(path, (doc) => {
+      const loc = locateTarget(doc, anchor);
+      if (!loc.ok) return { ok: false, reason: "修改后的内容已被再次改动，无法自动撤销。" };
+      return { ok: true, from: loc.from, to: loc.to, text: original };
+    });
+  }
+
+  /** Write through the open editor (undoable with Ctrl/Cmd+Z) or atomically on disk. */
+  private async writeNote(path: string, plan: Planner): Promise<NoteWriteResult> {
+    if (this.plugin.context.isExcluded(path)) return { ok: false, reason: "该笔记位于“排除的文件夹”中，不允许修改。" };
+    const view = this.findOpenView(path);
+    if (view) {
+      const editor = view.editor;
+      const doc = editor.getValue();
+      const p = plan(doc);
+      if (!p.ok) return p;
+      const replaced = doc.slice(p.from, p.to);
+      editor.replaceRange(p.text, editor.offsetToPos(p.from), editor.offsetToPos(p.to));
+      const after = editor.getValue();
+      return { ok: true, anchor: makeAnchor(after, p.from, p.from + p.text.length), replaced };
+    }
+    const file = this.plugin.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) return { ok: false, reason: "目标笔记不存在（可能已被删除或移动）。" };
+    let result: NoteWriteResult = { ok: false, reason: "写入失败。" };
+    await this.plugin.app.vault.process(file, (data) => {
+      const p = plan(data);
+      if (!p.ok) {
+        result = p;
+        return data;
+      }
+      const next = data.slice(0, p.from) + p.text + data.slice(p.to);
+      result = { ok: true, anchor: makeAnchor(next, p.from, p.from + p.text.length), replaced: data.slice(p.from, p.to) };
+      return next;
     });
     return result;
   }

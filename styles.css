@@ -112,9 +112,12 @@
 }
 .ai-agent-user-text { white-space: pre-wrap; word-break: break-word; }
 .ai-agent-msg.is-assistant .ai-agent-msg-body { padding: 0 2px; word-break: break-word; }
-.ai-agent-msg-body > :first-child { margin-top: 0; }
-.ai-agent-msg-body > :last-child { margin-bottom: 0; }
-.ai-agent-msg.is-streaming .ai-agent-msg-body > :last-child::after {
+.ai-agent-msg-body > :first-child,
+.ai-agent-msg-markdown > :first-child { margin-top: 0; }
+.ai-agent-msg-body > :last-child,
+.ai-agent-msg-markdown > :last-child { margin-bottom: 0; }
+.ai-agent-msg-markdown + .ai-agent-msg-markdown { margin-top: var(--p-spacing, 1em); }
+.ai-agent-msg.is-streaming .ai-agent-msg-body > .ai-agent-msg-markdown:last-child > :last-child::after {
   content: "▍";
   margin-left: 2px;
   color: var(--text-accent);
@@ -333,10 +336,11 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 @container ai-composer (max-width: 400px) {
   .ai-agent-picker.is-provider .ai-agent-picker-label { display: none; }
   .ai-agent-picker.is-provider { flex: none; }
+  .ai-agent-picker.is-model { max-width: none; }
 }
-@container ai-composer (max-width: 300px) {
-  .ai-agent-picker.is-effort .ai-agent-picker-label,
-  .ai-agent-picker.is-mode .ai-agent-picker-label { display: none; }
+/* the mode label stays visible: Auto writes to notes and should be obvious */
+@container ai-composer (max-width: 330px) {
+  .ai-agent-picker.is-effort .ai-agent-picker-label { display: none; }
 }
 .ai-agent-spacer { flex: 1; }
 .ai-agent-chat .ai-agent-send {
@@ -720,7 +724,109 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
   white-space: nowrap;
 }
 .ai-agent-popover-subtitle.is-warning { color: var(--color-orange); }
+.ai-agent-popover.is-wrapping .ai-agent-popover-subtitle { white-space: normal; }
+.ai-agent-popover-note > span:last-child { min-width: 0; }
 .ai-agent-popover-check { display: inline-flex; flex: none; width: 16px; color: var(--interactive-accent); }
 .ai-agent-popover-check svg { width: 15px; height: 15px; }
 .ai-agent-popover-item.is-checked .ai-agent-popover-check svg { animation: ai-agent-pop 300ms var(--ai-spring); }
 
+
+/* ==========================================================================
+   Note edit cards (Accept / Auto modes)
+   ========================================================================== */
+.ai-agent-edit-card {
+  margin: var(--size-4-2) 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-primary);
+  overflow: hidden;
+  transition: border-color 180ms ease, opacity 180ms ease;
+}
+.ai-agent-edit-card.is-pending { border-color: hsla(var(--interactive-accent-hsl), 0.55); }
+.ai-agent-edit-card.is-applied { border-color: rgba(var(--color-green-rgb), 0.5); }
+.ai-agent-edit-card.is-failed { border-color: rgba(var(--color-orange-rgb), 0.6); }
+.ai-agent-edit-card.is-rejected,
+.ai-agent-edit-card.is-reverted,
+.ai-agent-edit-card.is-incomplete { opacity: 0.72; }
+.ai-agent-edit-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  background: var(--background-secondary);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.ai-agent-edit-card-icon { display: inline-flex; color: var(--text-accent); }
+.ai-agent-edit-card-icon svg { width: 14px; height: 14px; }
+.ai-agent-edit-card-file {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+  text-decoration: none;
+  cursor: pointer;
+}
+.ai-agent-edit-card-file:hover { color: var(--text-accent); text-decoration: underline; }
+.ai-agent-edit-card-kind { flex: none; color: var(--text-faint); }
+.ai-agent-edit-card-stats { flex: none; display: inline-flex; gap: 4px; font-family: var(--font-monospace); }
+.ai-agent-edit-card-stats .is-ins { color: var(--color-green); }
+.ai-agent-edit-card-stats .is-del { color: var(--color-red); }
+.ai-agent-edit-card-status {
+  flex: none;
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: var(--radius-s);
+  line-height: 18px;
+  background: var(--background-modifier-hover);
+}
+.ai-agent-edit-card.is-pending .ai-agent-edit-card-status { color: var(--text-accent); background: hsla(var(--interactive-accent-hsl), 0.12); }
+.ai-agent-edit-card.is-applied .ai-agent-edit-card-status { color: var(--color-green); background: rgba(var(--color-green-rgb), 0.12); }
+.ai-agent-edit-card.is-failed .ai-agent-edit-card-status { color: var(--color-orange); background: rgba(var(--color-orange-rgb), 0.12); }
+.ai-agent-edit-card.is-streaming .ai-agent-edit-card-status { animation: ai-agent-blink 1.2s ease-in-out infinite; }
+.ai-agent-edit-card-diff {
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px 10px;
+  font-size: var(--font-ui-small);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ai-agent-edit-card-error {
+  padding: 6px 10px;
+  font-size: var(--font-ui-smaller);
+  color: var(--color-orange);
+  border-top: 1px solid var(--background-modifier-border);
+}
+.ai-agent-edit-card-actions {
+  display: flex;
+  gap: 6px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+.ai-agent-edit-card-actions button,
+.ai-agent-edit-bulk button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 10px;
+  font-size: var(--font-ui-smaller);
+}
+.ai-agent-edit-card-actions svg { width: 13px; height: 13px; }
+.ai-agent-edit-bulk {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 4px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+.ai-agent-edit-bulk > span { margin-right: auto; }
+@keyframes ai-agent-resolved { 0% { box-shadow: 0 0 0 0 rgba(var(--color-green-rgb), 0.4); } 100% { box-shadow: 0 0 0 6px rgba(var(--color-green-rgb), 0); } }
+.ai-agent-edit-card.is-resolved { animation: ai-agent-resolved 520ms ease-out; }
+.ai-agent-edit-card.is-shaking { animation: ai-agent-shake 360ms ease both; }

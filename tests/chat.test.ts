@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ChatController, buildRequestMessages } from "../src/chat/chat-manager";
+import { ChatController, buildRequestMessages, buildSystemPrompt, editablePathsOf } from "../src/chat/chat-manager";
 import { SessionStore, createSession, deriveTitle, sessionToMarkdown, type StorageAdapter } from "../src/chat/session-manager";
 import type { ChatSession } from "../src/chat/types";
 import { buildContext } from "../src/core/context-manager";
@@ -122,7 +122,65 @@ describe("helpers", () => {
   });
 });
 
+describe("chat modes", () => {
+  it("tells the model what it may do in each mode", () => {
+    expect(buildSystemPrompt("", { mode: "ask" })).toContain("Ask（问答）模式");
+    expect(buildSystemPrompt("", { mode: "ask" })).not.toContain("<<<<<<< SEARCH");
+    const accept = buildSystemPrompt("<context/>", { mode: "accept", editablePaths: ["A.md"] });
+    expect(accept).toContain("Accept 模式");
+    expect(accept).toContain('"A.md"');
+    expect(accept).toContain("<<<<<<< SEARCH");
+    expect(buildSystemPrompt("", { mode: "auto", editablePaths: [] })).toContain("没有附带任何笔记");
+  });
+
+  it("collects editable paths and reports edit outcomes in later turns", () => {
+    const ctx = buildContext(
+      [
+        { kind: "current-file", label: "A", path: "A.md", content: "a" },
+        { kind: "selection", label: "A 中的选中文本", path: "A.md", content: "a" },
+        { kind: "attached-file", label: "B", path: "B.md", content: "b" },
+      ],
+      1000,
+    );
+    expect(editablePathsOf(ctx)).toEqual(["A.md", "B.md"]);
+    const s = createSession({ mode: "accept" });
+    s.messages.push(
+      { id: "u", role: "user", content: "改一下", timestamp: 0 },
+      { id: "a", role: "assistant", content: "已修改", timestamp: 0, status: "done", edits: [{ index: 0, path: "A.md", status: "rejected" }] },
+      { id: "u2", role: "user", content: "为什么", timestamp: 0 },
+    );
+    const msgs = buildRequestMessages(s, "", 10_000, ["A.md"]);
+    expect(msgs[2].content).toBe("已修改\n\n[修改状态] 第 1 处（A.md）被用户拒绝");
+  });
+});
+
 describe("ChatController", () => {
+  it("runs afterReply before saving and records the mode", async () => {
+    const session = createSession({ mode: "auto" });
+    const p = fakeProvider(async function* () {
+      yield { type: "content", text: "ok" };
+      yield { type: "done" };
+    });
+    const seen: string[] = [];
+    const store = new SessionStore(new MemAdapter(), "d/sessions");
+    const c = new ChatController(session, {
+      getProvider: () => ({ provider: p, providerId: "fake", modelName: "Fake" }),
+      buildContext: async () => buildContext([], 1000),
+      save: async (s) => {
+        seen.push(`save:${s.messages[1]?.edits?.length ?? 0}`);
+        await store.save(s);
+      },
+      onUpdate: () => {},
+      historyBudget: () => 1000,
+      afterReply: async (_s, m) => {
+        seen.push(`after:${m.mode}`);
+        m.edits = [{ index: 0, path: "A.md", status: "applied" }];
+      },
+    });
+    await c.send("hi");
+    expect(seen).toEqual(["after:auto", "save:1"]);
+  });
+
   it("streams a reply, records context and persists", async () => {
     const session = createSession();
     const p = fakeProvider(async function* () {
