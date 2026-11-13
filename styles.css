@@ -1009,3 +1009,12 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 .ai-agent-changed-head svg { width: 14px; height: 14px; }
 .ai-agent-changed-head button { margin-left: auto; height: 24px; padding: 0 10px; font-size: var(--font-ui-smaller); }
 .ai-agent-edit-card-diff.is-create { border-left: 3px solid rgba(var(--color-green-rgb), 0.6); }
+
+/* inline completion */
+.ai-agent-ghost { color: var(--text-faint); opacity: 0.85; white-space: pre-wrap; pointer-events: none; }
+.ai-agent-completion-status { display: inline-flex; align-items: center; gap: 4px; }
+.ai-agent-completion-status.is-off { opacity: 0.55; }
+.ai-agent-completion-status.is-error { color: var(--text-error); }
+.ai-agent-completion-icon { display: inline-flex; }
+.ai-agent-completion-icon svg { width: 12px; height: 12px; }
+.ai-agent-completion-status.is-loading .ai-agent-completion-icon svg { animation: ai-agent-spin 900ms linear infinite; }

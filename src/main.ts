@@ -7,6 +7,7 @@ import { ObsidianContext } from "./context/obsidian-context";
 import { createFetchTransport, createNodeTransport, type HttpTransport } from "./core/http";
 import { LLMRouter } from "./core/llm-router";
 import { EDIT_ACTIONS, type EditAction } from "./core/prompt-manager";
+import { CompletionService } from "./editor/completion-service";
 import { EditManager } from "./editor/edit-manager";
 import { KeyStore, type SecretStorageLike } from "./settings/key-store";
 import { AIAgentSettingTab } from "./settings/settings-tab";
@@ -27,6 +28,7 @@ export default class AIAgentPlugin extends Plugin {
   vaultPort!: ObsidianVaultPort;
   /** "providerId|model" pairs that rejected function tools (this app session). */
   toolsUnsupported = new Set<string>();
+  completion!: CompletionService;
   private transports: Partial<Record<"node" | "fetch", HttpTransport>> = {};
 
   async onload(): Promise<void> {
@@ -49,6 +51,7 @@ export default class AIAgentPlugin extends Plugin {
     this.addRibbonIcon("bot", "打开 AI Chat", () => void this.activateChatView());
     this.registerChatCommands();
     this.registerEditCommands();
+    this.completion = new CompletionService(this);
     this.addSettingTab(new AIAgentSettingTab(this.app, this));
     logger.info(`loaded (${this.settings.providers.length} model config(s))`);
   }
@@ -70,6 +73,7 @@ export default class AIAgentPlugin extends Plugin {
     logger.debugEnabled = this.settings.debugLogging;
     await this.saveData(this.settings);
     for (const view of this.chatViews()) view.refreshModels();
+    this.completion?.renderStatus("idle");
   }
 
   async removeProvider(id: string): Promise<void> {

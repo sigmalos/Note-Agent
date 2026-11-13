@@ -1,7 +1,7 @@
 import type { ProviderConfig } from "../providers/base/provider.types";
 
 /** Task types that can be routed to different models (SRS §4.1.5). */
-export type TaskType = "chat" | "editing";
+export type TaskType = "chat" | "editing" | "completion";
 
 export type TransportMode = "auto" | "node" | "fetch";
 
@@ -30,12 +30,19 @@ export interface PluginSettings {
   /** SRS §4.6.6 limits. */
   agentMaxIterations: number;
   agentMaxFileOps: number;
+
+  /** Inline ghost-text completion (SRS §4.5). Off by default: it sends requests while typing. */
+  completionEnabled: boolean;
+  completionDelayMs: number;
+  completionMaxChars: number;
+  /** Model id for completion ("" = the completion provider's current model). */
+  completionModel: string;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
   providers: [],
   defaultProviderId: "",
-  taskModels: { chat: "", editing: "" },
+  taskModels: { chat: "", editing: "", completion: "" },
   enableStreaming: true,
   showReasoning: true,
   transport: "auto",
@@ -47,6 +54,10 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   agentTools: true,
   agentMaxIterations: 20,
   agentMaxFileOps: 10,
+  completionEnabled: false,
+  completionDelayMs: 800,
+  completionMaxChars: 200,
+  completionModel: "",
 };
 
 const num = (v: unknown, fallback: number | undefined, min?: number, max?: number): number | undefined => {
@@ -141,6 +152,10 @@ export function normalizeSettings(raw: unknown): PluginSettings {
     agentTools: r.agentTools !== false,
     agentMaxIterations: num(r.agentMaxIterations, DEFAULT_SETTINGS.agentMaxIterations, 1, 50)!,
     agentMaxFileOps: num(r.agentMaxFileOps, DEFAULT_SETTINGS.agentMaxFileOps, 1, 100)!,
+    completionEnabled: r.completionEnabled === true,
+    completionDelayMs: num(r.completionDelayMs, DEFAULT_SETTINGS.completionDelayMs, 200, 5000)!,
+    completionMaxChars: num(r.completionMaxChars, DEFAULT_SETTINGS.completionMaxChars, 20, 2000)!,
+    completionModel: typeof r.completionModel === "string" ? r.completionModel.trim() : "",
   };
 }
 

@@ -10,6 +10,7 @@ import { generateId, type TaskType } from "./settings";
 const TASK_LABELS: Record<TaskType, { name: string; desc: string }> = {
   chat: { name: "对话服务商", desc: "新建 AI Chat 会话默认使用的服务商（会话中可随时切换）。" },
   editing: { name: "编辑服务商", desc: "选中文本改写、润色、续写等编辑操作使用的服务商，使用其在对话中最近选择的模型。" },
+  completion: { name: "补全服务商", desc: "行内补全使用的服务商；模型在下方“行内补全”中设置。" },
 };
 
 export class AIAgentSettingTab extends PluginSettingTab {
@@ -33,6 +34,7 @@ export class AIAgentSettingTab extends PluginSettingTab {
     this.renderChatAndContext(containerEl);
     this.renderAgent(containerEl);
     this.renderEditing(containerEl);
+    this.renderCompletion(containerEl);
     this.renderAdvanced(containerEl);
   }
 
@@ -276,6 +278,56 @@ export class AIAgentSettingTab extends PluginSettingTab {
         });
     numeric("最大执行轮次", "一次任务中模型最多调用几轮工具，超过后停止并总结（1–50）。", "agentMaxIterations", 1, 50);
     numeric("最大文件操作数", "一次任务中最多新建、修改、移动或删除几次文件（1–100）。", "agentMaxFileOps", 1, 100);
+  }
+
+  private renderCompletion(el: HTMLElement): void {
+    const s = this.plugin.settings;
+    new Setting(el).setName("行内补全").setHeading();
+    new Setting(el)
+      .setName("启用行内补全")
+      .setDesc("输入停顿后，模型在光标处以灰色文字给出续写建议：Tab 接受，Esc 忽略，Ctrl/Cmd+→ 接受一个词。开启后写作时会持续发送请求（只发送光标附近的内容）。也可以用命令“切换 AI 行内补全”。")
+      .addToggle((t) =>
+        t.setValue(s.completionEnabled).onChange(async (v) => {
+          s.completionEnabled = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+    const cfg = (() => {
+      try {
+        return this.plugin.router.resolveConfig("completion");
+      } catch {
+        return null;
+      }
+    })();
+    const model = new Setting(el)
+      .setName("补全模型")
+      .setDesc(`建议选择响应快、不带深度思考的小模型。留空时使用补全服务商当前的模型${cfg?.model ? `（${cfg.model}）` : ""}。`)
+      .addText((t) => {
+        t.setPlaceholder(cfg?.model || "模型 ID").setValue(s.completionModel).onChange(async (v) => {
+          s.completionModel = v.trim();
+          await this.plugin.saveSettings();
+        });
+        if (cfg?.models?.length) {
+          const list = model.controlEl.createEl("datalist", { attr: { id: "ai-agent-completion-models" } });
+          for (const m of cfg.models) list.createEl("option", { value: m });
+          t.inputEl.setAttr("list", list.id);
+        }
+      });
+    const numeric = (name: string, desc: string, key: "completionDelayMs" | "completionMaxChars", min: number, max: number) =>
+      new Setting(el)
+        .setName(name)
+        .setDesc(desc)
+        .addText((t) => {
+          t.inputEl.type = "number";
+          t.setValue(String(s[key])).onChange(async (v) => {
+            const n = Math.round(Number(v));
+            if (!Number.isFinite(n)) return;
+            s[key] = Math.min(max, Math.max(min, n));
+            await this.plugin.saveSettings();
+          });
+        });
+    numeric("触发延迟（毫秒）", "停止输入多久后请求补全（200–5000）。", "completionDelayMs", 200, 5000);
+    numeric("最大补全长度（字）", "单次建议的最大字数（20–2000）。", "completionMaxChars", 20, 2000);
   }
 
   private renderEditing(el: HTMLElement): void {
