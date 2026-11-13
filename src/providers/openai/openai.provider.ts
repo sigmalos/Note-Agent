@@ -10,8 +10,10 @@ import type {
   LLMProvider,
   ModelInfo,
   ProviderCapabilities,
+  LLMMessage,
   ProviderConfig,
   ReasoningEffort,
+  ToolCall,
   Usage,
 } from "../base/provider.types";
 
@@ -150,6 +152,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       const r = await this.chat(request);
       if (r.reasoning) yield { type: "reasoning", text: r.reasoning };
       if (r.content) yield { type: "content", text: r.content };
+      for (const call of r.toolCalls ?? []) yield { type: "tool_call", call };
       yield { type: "done", finishReason: r.finishReason, usage: r.usage };
       return;
     }
@@ -162,6 +165,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       const r = parseCompletionJSON(await res.text());
       if (r.reasoning) yield { type: "reasoning", text: r.reasoning };
       if (r.content) yield { type: "content", text: r.content };
+      for (const call of r.toolCalls ?? []) yield { type: "tool_call", call };
       yield { type: "done", finishReason: r.finishReason, usage: r.usage };
       return;
     }
@@ -171,6 +175,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     let finishReason: string | undefined;
     let usage: Usage | undefined;
     let finished = false;
+    const calls = new ToolCallAssembler();
 
     const handle = function* (data: string): Generator<ChatChunk> {
       if (data === "[DONE]") {
@@ -198,6 +203,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
         if (s.reasoning) yield { type: "reasoning", text: s.reasoning };
         if (s.content) yield { type: "content", text: s.content };
       }
+      if (Array.isArray(delta.tool_calls)) calls.push(delta.tool_calls);
       if (choice.finish_reason) finishReason = choice.finish_reason;
     };
 
@@ -213,6 +219,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     const tail = splitter.flush();
     if (tail.reasoning) yield { type: "reasoning", text: tail.reasoning };
     if (tail.content) yield { type: "content", text: tail.content };
+    for (const call of calls.finish()) yield { type: "tool_call", call };
     yield { type: "done", finishReason, usage };
   }
 
@@ -262,6 +269,9 @@ export class OpenAICompatibleProvider implements LLMProvider {
         return res;
       }
       const text = await res.text();
+      if (request.tools?.length && res.status >= 400 && res.status < 500 && TOOLS_REJECTED.test(text)) {
+        throw new LLMError("tools_unsupported", { status: res.status, detail: text, where });
+      }
       const rejected = effort && res.status >= 400 && res.status < 500 && /reasoning[_ -]?effort/i.test(text);
       if (!rejected || i === candidates.length - 1) throw errorFromStatus(res.status, text, where);
     }
@@ -270,9 +280,12 @@ export class OpenAICompatibleProvider implements LLMProvider {
   private post(request: ChatRequest, stream: boolean, effort?: string) {
     const body: Record<string, unknown> = {
       model: this.modelFor(request),
-      messages: request.messages,
+      messages: request.messages.map(toWireMessage),
       stream,
     };
+    if (request.tools?.length) {
+      body.tools = request.tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
+    }
     if (effort) body.reasoning_effort = effort;
     const temperature = request.temperature ?? this.config.temperature;
     const maxTokens = request.maxTokens ?? this.config.maxTokens;
@@ -289,6 +302,47 @@ export class OpenAICompatibleProvider implements LLMProvider {
       signal: request.signal,
       timeoutMs: this.timeoutMs(),
     });
+  }
+}
+
+/** Server messages that mean "this model/endpoint does not accept function tools". */
+const TOOLS_REJECTED = /\b(tools?|tool_choice|function[_ ]?call(ing)?)\b.*\b(not|un)\s*(supported|support|allowed|available)|does not support (tools|function)|unsupported.*\btools?\b|unknown (field|parameter).*tools/i;
+
+/** OpenAI wire format for a provider-neutral message. */
+export function toWireMessage(m: LLMMessage): Record<string, unknown> {
+  if (m.role === "tool") return { role: "tool", tool_call_id: m.toolCallId ?? "", content: m.content };
+  if (m.role === "assistant" && m.toolCalls?.length) {
+    const out: Record<string, unknown> = {
+      role: "assistant",
+      content: m.content || null,
+      tool_calls: m.toolCalls.map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: c.arguments || "{}" } })),
+    };
+    if (m.reasoning) out.reasoning_content = m.reasoning;
+    return out;
+  }
+  return { role: m.role, content: m.content };
+}
+
+/** Joins streamed tool_call deltas (split by index) into complete calls. */
+export class ToolCallAssembler {
+  private parts = new Map<number, ToolCall>();
+
+  push(deltas: unknown[]): void {
+    deltas.forEach((d: any, i: number) => {
+      const index = typeof d?.index === "number" ? d.index : i;
+      const cur = this.parts.get(index) ?? { id: "", name: "", arguments: "" };
+      if (d?.id) cur.id = String(d.id);
+      if (d?.function?.name) cur.name += String(d.function.name);
+      if (d?.function?.arguments) cur.arguments += typeof d.function.arguments === "string" ? d.function.arguments : JSON.stringify(d.function.arguments);
+      this.parts.set(index, cur);
+    });
+  }
+
+  finish(): ToolCall[] {
+    return [...this.parts.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([i, c]) => ({ ...c, id: c.id || `call_${i}` }))
+      .filter((c) => c.name);
   }
 }
 
@@ -331,9 +385,19 @@ export function parseCompletionJSON(text: string): ChatResponse {
   const msg = choice.message ?? {};
   const split = splitThinkTags(typeof msg.content === "string" ? msg.content : "");
   const reasoning = [msg.reasoning_content ?? msg.reasoning ?? "", split.reasoning].filter(Boolean).join("\n");
+  const toolCalls = Array.isArray(msg.tool_calls)
+    ? msg.tool_calls
+        .map((tc: any, i: number) => ({
+          id: String(tc?.id ?? `call_${i}`),
+          name: String(tc?.function?.name ?? ""),
+          arguments: typeof tc?.function?.arguments === "string" ? tc.function.arguments : JSON.stringify(tc?.function?.arguments ?? {}),
+        }))
+        .filter((c: ToolCall) => c.name)
+    : undefined;
   return {
     content: split.content,
     reasoning,
+    toolCalls: toolCalls?.length ? toolCalls : undefined,
     finishReason: choice.finish_reason ?? undefined,
     usage: json.usage ? mapUsage(json.usage) : undefined,
     model: json.model,

@@ -38,11 +38,31 @@ export interface ProviderConfig {
   enableStreaming?: boolean;
 }
 
-export type Role = "system" | "user" | "assistant";
+export type Role = "system" | "user" | "assistant" | "tool";
+
+/** A function call requested by the model (OpenAI tool_calls). `arguments` is raw JSON text. */
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
+/** Tool offered to the model; `parameters` is a JSON Schema object. */
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
 
 export interface LLMMessage {
   role: Role;
   content: string;
+  /** assistant: tool calls made in this turn. */
+  toolCalls?: ToolCall[];
+  /** tool: the call this message answers. */
+  toolCallId?: string;
+  /** Reasoning returned with a tool-call turn; some thinking models expect it back. */
+  reasoning?: string;
 }
 
 export interface Usage {
@@ -59,6 +79,8 @@ export interface ChatRequest {
   /** Override the configured model for this request. */
   model?: string;
   reasoningEffort?: ReasoningEffort;
+  /** Function tools the model may call. */
+  tools?: ToolDefinition[];
   temperature?: number;
   maxTokens?: number;
   topP?: number;
@@ -68,6 +90,7 @@ export interface ChatRequest {
 export interface ChatResponse {
   content: string;
   reasoning: string;
+  toolCalls?: ToolCall[];
   finishReason?: string;
   usage?: Usage;
   model?: string;
@@ -76,6 +99,8 @@ export interface ChatResponse {
 export type ChatChunk =
   | { type: "content"; text: string }
   | { type: "reasoning"; text: string }
+  /** Emitted once per call when the stream ends (arguments assembled from deltas). */
+  | { type: "tool_call"; call: ToolCall }
   | { type: "done"; finishReason?: string; usage?: Usage };
 
 export interface ModelInfo {

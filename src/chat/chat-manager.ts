@@ -161,7 +161,7 @@ export class ChatController {
           if (!assistant.reasoning) assistant.reasoningStartedAt = startedAt;
           assistant.reasoning += chunk.text;
         }
-        else if (chunk.usage) assistant.usage = chunk.usage;
+        else if (chunk.type === "done" && chunk.usage) assistant.usage = chunk.usage;
         this.deps.onUpdate(this.session, assistant);
       }
       endThinking();

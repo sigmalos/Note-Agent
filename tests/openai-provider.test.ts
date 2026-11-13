@@ -3,7 +3,7 @@ import https from "node:https";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createFetchTransport, createNodeTransport, type HttpTransport } from "../src/core/http";
-import { OpenAICompatibleProvider, resetEffortFallbacks, resolveApiRoot } from "../src/providers/openai/openai.provider";
+import { OpenAICompatibleProvider, ToolCallAssembler, resetEffortFallbacks, resolveApiRoot, toWireMessage } from "../src/providers/openai/openai.provider";
 import type { ChatChunk, ProviderConfig } from "../src/providers/base/provider.types";
 import { LLMError } from "../src/providers/base/errors";
 
@@ -48,13 +48,37 @@ async function collect(it: AsyncIterable<ChatChunk>) {
   let content = "";
   let reasoning = "";
   let done: ChatChunk | undefined;
+  const calls: Array<{ id: string; name: string; arguments: string }> = [];
   for await (const c of it) {
     if (c.type === "content") content += c.text;
     else if (c.type === "reasoning") reasoning += c.text;
+    else if (c.type === "tool_call") calls.push(c.call);
     else done = c;
   }
-  return { content, reasoning, done };
+  return { content, reasoning, done, calls };
 }
+
+describe("tool call wire format", () => {
+  it("assembles streamed deltas by index", () => {
+    const a = new ToolCallAssembler();
+    a.push([{ index: 0, id: "c1", function: { name: "search_", arguments: '{"q' } }]);
+    a.push([{ index: 1, id: "c2", function: { name: "read_file", arguments: "{}" } }, { index: 0, function: { name: "vault", arguments: '":"x"}' } }]);
+    expect(a.finish()).toEqual([
+      { id: "c1", name: "search_vault", arguments: '{"q":"x"}' },
+      { id: "c2", name: "read_file", arguments: "{}" },
+    ]);
+  });
+  it("serialises assistant tool calls and tool results", () => {
+    expect(toWireMessage({ role: "assistant", content: "", toolCalls: [{ id: "c1", name: "f", arguments: "" }], reasoning: "r" })).toEqual({
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "c1", type: "function", function: { name: "f", arguments: "{}" } }],
+      reasoning_content: "r",
+    });
+    expect(toWireMessage({ role: "tool", content: "ok", toolCallId: "c1" })).toEqual({ role: "tool", tool_call_id: "c1", content: "ok" });
+    expect(toWireMessage({ role: "user", content: "hi" })).toEqual({ role: "user", content: "hi" });
+  });
+});
 
 const transports: Array<[string, () => HttpTransport]> = [
   ["node", () => createNodeTransport({ http, https })],
@@ -152,6 +176,39 @@ describe.each(transports)("OpenAICompatibleProvider over %s transport", (_name, 
     const p = new OpenAICompatibleProvider(cfg(), makeTransport());
     await expect(collect(p.streamChat({ messages: [], reasoningEffort: "low" }))).rejects.toBeInstanceOf(LLMError);
     expect(calls).toBe(1);
+  });
+
+  it("sends tools and returns streamed tool calls", async () => {
+    handler = (_req, _body, res) =>
+      sse(res, [
+        delta({ content: "我来搜索。" }),
+        delta({ tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "search_vault", arguments: "" } }] }),
+        delta({ tool_calls: [{ index: 0, function: { arguments: '{"query":' } }] }),
+        delta({ tool_calls: [{ index: 0, function: { arguments: '"RAG"}' } }] }, "tool_calls"),
+      ]);
+    const p = new OpenAICompatibleProvider(cfg(), makeTransport());
+    const tools = [{ name: "search_vault", description: "search", parameters: { type: "object", properties: {} } }];
+    const out = await collect(p.streamChat({ messages: [{ role: "user", content: "x" }], tools }));
+    expect(out.content).toBe("我来搜索。");
+    expect(out.calls).toEqual([{ id: "call_1", name: "search_vault", arguments: '{"query":"RAG"}' }]);
+    expect(out.done).toMatchObject({ finishReason: "tool_calls" });
+    expect(requests[requests.length - 1].body.tools[0]).toMatchObject({ type: "function", function: { name: "search_vault" } });
+  });
+
+  it("returns tool calls from JSON responses and flags unsupported tools", async () => {
+    handler = (_req, _body, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ choices: [{ message: { content: null, tool_calls: [{ id: "c", type: "function", function: { name: "read_file", arguments: '{"path":"a.md"}' } }] }, finish_reason: "tool_calls" }] }));
+    };
+    const tools = [{ name: "read_file", description: "read", parameters: { type: "object" } }];
+    const p = new OpenAICompatibleProvider(cfg({ enableStreaming: false }), makeTransport());
+    expect((await collect(p.streamChat({ messages: [{ role: "user", content: "x" }], tools }))).calls).toEqual([{ id: "c", name: "read_file", arguments: '{"path":"a.md"}' }]);
+
+    handler = (_req, _body, res) => {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "This model does not support tools" } }));
+    };
+    await expect(collect(p.streamChat({ messages: [{ role: "user", content: "x" }], tools }))).rejects.toMatchObject({ kind: "tools_unsupported" });
   });
 
   it("splits inline <think> tags out of streamed content", async () => {

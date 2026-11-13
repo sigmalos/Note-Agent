@@ -16,7 +16,8 @@ export type LLMErrorKind =
   | "timeout"
   | "network"
   | "aborted"
-  | "bad_response";
+  | "bad_response"
+  | "tools_unsupported";
 
 const HINTS: Record<LLMErrorKind, { title: string; hint: string; retryable: boolean }> = {
   config: { title: "模型配置不完整", hint: "请在设置中检查 API Endpoint 与 Model ID。", retryable: false },
@@ -31,6 +32,7 @@ const HINTS: Record<LLMErrorKind, { title: string; hint: string; retryable: bool
   network: { title: "无法连接到模型服务", hint: "请检查网络、代理以及 API Endpoint 地址。", retryable: true },
   aborted: { title: "已停止生成", hint: "", retryable: true },
   bad_response: { title: "模型返回了无法解析的数据", hint: "该服务可能并不完全兼容 OpenAI 协议，请尝试关闭流式输出。", retryable: true },
+  tools_unsupported: { title: "该模型不支持工具调用", hint: "将改用不调用工具的方式继续。", retryable: true },
 };
 
 export interface LLMErrorInit {
