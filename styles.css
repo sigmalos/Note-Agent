@@ -97,18 +97,26 @@
   color: var(--text-muted);
 }
 .ai-agent-msg-role { font-weight: var(--font-semibold); color: var(--text-normal); }
-.ai-agent-msg-model {
-  padding: 0 6px;
-  border-radius: var(--radius-s);
-  background: var(--background-modifier-hover);
-}
 .ai-agent-msg-time { margin-left: auto; color: var(--text-faint); }
 
+/* user turn: header, bubble and attachments all sit on the right */
+.ai-agent-msg.is-user { align-items: flex-end; }
+.ai-agent-msg.is-user .ai-agent-msg-header { justify-content: flex-end; }
+.ai-agent-msg.is-user .ai-agent-msg-time { margin-left: 0; }
 .ai-agent-msg.is-user .ai-agent-msg-body {
   /* sidebars already use --background-secondary, so tint with the accent instead */
+  max-width: 85%;
   background: hsla(var(--interactive-accent-hsl), 0.1);
-  border-radius: var(--radius-m);
+  border-radius: var(--radius-m) var(--radius-m) var(--radius-s) var(--radius-m);
   padding: var(--size-2-3) var(--size-4-3);
+}
+.ai-agent-msg.is-user .ai-agent-msg-context { align-self: flex-end; max-width: 85%; }
+.ai-agent-msg.is-user .ai-agent-msg-context > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* a rule between the prompt and its answer */
+.ai-agent-msg.is-user + .ai-agent-msg.is-assistant {
+  padding-top: var(--size-4-3);
+  border-top: 1px solid var(--background-modifier-border);
 }
 .ai-agent-user-text { white-space: pre-wrap; word-break: break-word; }
 .ai-agent-msg.is-assistant .ai-agent-msg-body { padding: 0 2px; word-break: break-word; }
@@ -145,6 +153,32 @@
 }
 .ai-agent-reasoning summary { cursor: pointer; user-select: none; }
 .ai-agent-reasoning-body { white-space: pre-wrap; max-height: 240px; overflow-y: auto; margin-top: 4px; }
+/* chat: thinking reads like the answer (same size), only greyed out */
+.ai-agent-msg .ai-agent-reasoning {
+  font-size: inherit;
+  line-height: var(--line-height-normal, 1.5);
+  color: var(--text-faint);
+  border-left: none;
+  padding-left: 0;
+}
+.ai-agent-msg .ai-agent-reasoning summary { gap: 6px; color: var(--text-muted); }
+.ai-agent-reasoning-time { color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.ai-agent-reasoning-time:empty { display: none; }
+.ai-agent-msg .ai-agent-reasoning-body {
+  margin: 6px 0 2px;
+  padding-left: var(--size-4-3);
+  border-left: 2px solid var(--background-modifier-border);
+  max-height: 320px;
+}
+@keyframes ai-agent-shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+.ai-agent-reasoning.is-thinking .ai-agent-reasoning-label {
+  background: linear-gradient(90deg, var(--text-muted) 0%, var(--text-muted) 35%, var(--text-normal) 50%, var(--text-muted) 65%, var(--text-muted) 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: ai-agent-shimmer 1.8s linear infinite;
+}
 
 .ai-agent-typing { color: var(--text-faint); font-size: var(--font-ui-small); }
 .ai-agent-msg-note { font-size: var(--font-ui-smaller); color: var(--text-faint); }

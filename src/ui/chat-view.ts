@@ -1,6 +1,6 @@
 import { Component, ItemView, Keymap, MarkdownRenderer, Notice, TFile, setIcon, type WorkspaceLeaf } from "obsidian";
 import { ChatController } from "../chat/chat-manager";
-import { EFFORT_OPTIONS, MODE_OPTIONS, effortOption, modeOption, modelChoices } from "../chat/chat-options";
+import { EFFORT_OPTIONS, MODE_OPTIONS, effortOption, formatDuration, modeOption, modelChoices } from "../chat/chat-options";
 import { noteEditsOf, parseNoteEdits, resolveEditPath, stripNoteEdits, type NoteEditBlock, type NoteEditRecord } from "../chat/note-edits";
 import { createSession, sessionToMarkdown, type SessionOptions } from "../chat/session-manager";
 import type { ChatMessage, ChatSession } from "../chat/types";
@@ -111,7 +111,16 @@ export class ChatView extends ItemView {
     this.registerEvent(this.app.workspace.on("file-open", () => this.refreshContextBar()));
     this.registerEvent(this.app.vault.on("rename", (f, oldPath) => this.onRename(f.path, oldPath)));
     // Selection changes have no workspace event; poll cheaply while the view is visible.
-    this.registerInterval(window.setInterval(() => this.containerEl.isShown() && this.refreshContextBar(), 1000));
+    this.registerInterval(
+      window.setInterval(() => {
+        if (!this.containerEl.isShown()) return;
+        this.refreshContextBar();
+        // Live "思考中 · N 秒" timers.
+        this.messagesEl.querySelectorAll<HTMLElement>("[data-since]").forEach((el) => {
+          el.setText(formatDuration(Date.now() - Number(el.getAttr("data-since"))));
+        });
+      }, 1000),
+    );
   }
 
   async onClose(): Promise<void> {
@@ -968,12 +977,13 @@ export class ChatView extends ItemView {
     el.toggleClass("is-streaming", msg.status === "streaming");
     el.toggleClass("is-error", msg.status === "error");
 
-    const header = el.createDiv({ cls: "ai-agent-msg-header" });
-    header.createSpan({ cls: "ai-agent-msg-role", text: msg.role === "user" ? "你" : "AI" });
-    if (msg.role === "assistant" && msg.modelName) header.createSpan({ cls: "ai-agent-msg-model", text: msg.modelName });
-    header.createSpan({ cls: "ai-agent-msg-time", text: new Date(msg.timestamp).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) });
+    const time = new Date(msg.timestamp).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
     if (msg.role === "user") {
+      // Right-aligned like a chat bubble: label + time, the prompt, then what was attached.
+      const header = el.createDiv({ cls: "ai-agent-msg-header" });
+      header.createSpan({ cls: "ai-agent-msg-time", text: time });
+      header.createSpan({ cls: "ai-agent-msg-role", text: "你" });
       el.createDiv({ cls: "ai-agent-msg-body ai-agent-user-text", text: msg.content });
       const used = (msg.attachments ?? []).filter((a) => !a.omitted);
       if (msg.attachments?.length) {
@@ -987,9 +997,20 @@ export class ChatView extends ItemView {
     } else {
       if (msg.reasoning && this.plugin.settings.showReasoning) {
         const details = el.createEl("details", { cls: "ai-agent-reasoning" });
+        const thinking = msg.status === "streaming" && msg.reasoningMs === undefined;
         // Auto-expand only while the model is still thinking; afterwards respect the user's choice.
-        details.open = this.reasoningToggled.get(msg.id) ?? (msg.status === "streaming" && !msg.content);
-        const summary = details.createEl("summary", { text: msg.status === "streaming" && !msg.content ? "思考中…" : "思考过程" });
+        details.open = this.reasoningToggled.get(msg.id) ?? thinking;
+        const summary = details.createEl("summary");
+        summary.createSpan({ cls: "ai-agent-reasoning-label", text: thinking ? "思考中" : "思考过程" });
+        const dur = summary.createSpan({ cls: "ai-agent-reasoning-time" });
+        if (thinking && msg.reasoningStartedAt) {
+          // Ticks every second (see onOpen) even when no chunk arrives.
+          dur.setAttr("data-since", String(msg.reasoningStartedAt));
+          dur.setText(formatDuration(Date.now() - msg.reasoningStartedAt));
+          details.addClass("is-thinking");
+        } else if (msg.reasoningMs !== undefined) {
+          dur.setText(`用时 ${formatDuration(msg.reasoningMs)}`);
+        }
         const rBody = details.createDiv({ cls: "ai-agent-reasoning-body", text: msg.reasoning });
         summary.addEventListener("click", () => {
           this.reasoningToggled.set(msg.id, !details.open);
@@ -1057,7 +1078,11 @@ export class ChatView extends ItemView {
         void this.controller.regenerate();
       });
     }
-    if (msg.usage?.totalTokens) actions.createSpan({ cls: "ai-agent-msg-usage", text: `${msg.usage.totalTokens} tokens` });
+    // Model and time stay available without a header: faint, at the end of the action row.
+    const meta = actions.createSpan({ cls: "ai-agent-msg-usage" });
+    const time = new Date(msg.timestamp).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+    meta.setText(msg.usage?.totalTokens ? `${msg.usage.totalTokens} tokens · ${time}` : time);
+    if (msg.modelName) meta.setAttr("aria-label", msg.modelName);
   }
 
   /* ------------------------------ note edits ----------------------------- */

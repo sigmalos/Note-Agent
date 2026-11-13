@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { effortOption, modeOption, modelChoices } from "../src/chat/chat-options";
+import { effortOption, formatDuration, modeOption, modelChoices } from "../src/chat/chat-options";
 import { ModelCatalog } from "../src/chat/model-catalog";
 import type { ProviderConfig } from "../src/providers/base/provider.types";
 
@@ -15,6 +15,13 @@ describe("chat options", () => {
     expect(modelChoices({ model: "", models: ["x"] }, ["c", "b", "c", " "])).toEqual({ recent: [], all: ["c", "b"] });
     expect(modelChoices({ model: "" })).toEqual({ recent: [], all: [] });
   });
+});
+
+it("formats thinking time", () => {
+  expect(formatDuration(200)).toBe("1 秒");
+  expect(formatDuration(8400)).toBe("8 秒");
+  expect(formatDuration(65_000)).toBe("1 分 5 秒");
+  expect(formatDuration(120_000)).toBe("2 分钟");
 });
 
 describe("ModelCatalog", () => {

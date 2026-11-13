@@ -24,6 +24,10 @@ export interface ChatMessage {
   timestamp: number;
   /** Model reasoning (reasoning_content / <think>), shown collapsed, never sent back. */
   reasoning?: string;
+  /** When the model started thinking (request sent), for the live timer. */
+  reasoningStartedAt?: number;
+  /** How long the model thought: request sent → first answer text (or end of reply). */
+  reasoningMs?: number;
   status?: MessageStatus;
   error?: string;
   /** User messages: the context that was sent with this turn. */

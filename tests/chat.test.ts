@@ -156,6 +156,35 @@ describe("chat modes", () => {
 });
 
 describe("ChatController", () => {
+  it("measures thinking time until the answer starts", async () => {
+    let t = 1000;
+    const session = createSession();
+    const p = fakeProvider(async function* () {
+      t += 500;
+      yield { type: "reasoning", text: "想" };
+      t += 2500;
+      yield { type: "reasoning", text: "想" };
+      t += 100;
+      yield { type: "content", text: "答" };
+      t += 4000;
+      yield { type: "content", text: "案" };
+      yield { type: "done" };
+    });
+    const c = new ChatController(
+      session,
+      {
+        getProvider: () => ({ provider: p, providerId: "fake", modelName: "Fake" }),
+        buildContext: async () => buildContext([], 1000),
+        save: async () => {},
+        onUpdate: () => {},
+        historyBudget: () => 1000,
+      },
+      () => t,
+    );
+    await c.send("hi");
+    expect(session.messages[1]).toMatchObject({ reasoningStartedAt: 1000, reasoningMs: 3100, content: "答案" });
+  });
+
   it("runs afterReply before saving and records the mode", async () => {
     const session = createSession({ mode: "auto" });
     const p = fakeProvider(async function* () {

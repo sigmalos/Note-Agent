@@ -81,6 +81,7 @@ export class ChatController {
   constructor(
     public session: ChatSession,
     private readonly deps: ChatControllerDeps,
+    private readonly now: () => number = () => Date.now(),
   ) {}
 
   get busy(): boolean {
@@ -148,18 +149,31 @@ export class ChatController {
         editablePathsOf(ctx),
       );
       const request = { messages, signal: this.abort.signal, model: modelName, reasoningEffort: this.session.effort };
+      const startedAt = this.now();
+      const endThinking = () => {
+        if (assistant.reasoning && assistant.reasoningMs === undefined) assistant.reasoningMs = this.now() - startedAt;
+      };
       for await (const chunk of provider.streamChat(request)) {
-        if (chunk.type === "content") assistant.content += chunk.text;
-        else if (chunk.type === "reasoning") assistant.reasoning += chunk.text;
+        if (chunk.type === "content") {
+          endThinking();
+          assistant.content += chunk.text;
+        } else if (chunk.type === "reasoning") {
+          if (!assistant.reasoning) assistant.reasoningStartedAt = startedAt;
+          assistant.reasoning += chunk.text;
+        }
         else if (chunk.usage) assistant.usage = chunk.usage;
         this.deps.onUpdate(this.session, assistant);
       }
+      endThinking();
       assistant.status = "done";
       if (!assistant.content.trim() && assistant.reasoning) {
         assistant.error = "模型只返回了思考过程，没有给出最终回答（可能达到了 Max Tokens 上限）。";
         assistant.status = "error";
       }
     } catch (err) {
+      if (assistant.reasoning && assistant.reasoningMs === undefined && assistant.reasoningStartedAt) {
+        assistant.reasoningMs = this.now() - assistant.reasoningStartedAt;
+      }
       const e = toLLMError(err, "AI Chat");
       if (e.kind === "aborted" || this.abort?.signal.aborted) {
         assistant.status = "stopped";

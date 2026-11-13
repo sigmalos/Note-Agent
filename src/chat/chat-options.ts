@@ -73,3 +73,12 @@ export function modelChoices(
   const all = uniq([...(fetched.length ? fetched : cfg.models ?? [])]).filter((m) => !recent.includes(m));
   return { recent, all };
 }
+
+/** "8 秒", "1 分 5 秒"; at least 1 second. */
+export function formatDuration(ms: number): string {
+  const total = Math.max(1, Math.round(ms / 1000));
+  if (total < 60) return `${total} 秒`;
+  const m = Math.floor(total / 60);
+  const sec = total % 60;
+  return sec ? `${m} 分 ${sec} 秒` : `${m} 分钟`;
+}
