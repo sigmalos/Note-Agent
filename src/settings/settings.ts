@@ -24,6 +24,12 @@ export interface PluginSettings {
 
   translateTargetLanguage: string;
   debugLogging: boolean;
+
+  /** Let chat models call vault tools (search, read, edit…) when the model supports it. */
+  agentTools: boolean;
+  /** SRS §4.6.6 limits. */
+  agentMaxIterations: number;
+  agentMaxFileOps: number;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -38,6 +44,9 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   excludedFolders: [],
   translateTargetLanguage: "English",
   debugLogging: false,
+  agentTools: true,
+  agentMaxIterations: 20,
+  agentMaxFileOps: 10,
 };
 
 const num = (v: unknown, fallback: number | undefined, min?: number, max?: number): number | undefined => {
@@ -129,6 +138,9 @@ export function normalizeSettings(raw: unknown): PluginSettings {
         ? r.translateTargetLanguage.trim()
         : DEFAULT_SETTINGS.translateTargetLanguage,
     debugLogging: r.debugLogging === true,
+    agentTools: r.agentTools !== false,
+    agentMaxIterations: num(r.agentMaxIterations, DEFAULT_SETTINGS.agentMaxIterations, 1, 50)!,
+    agentMaxFileOps: num(r.agentMaxFileOps, DEFAULT_SETTINGS.agentMaxFileOps, 1, 100)!,
   };
 }
 

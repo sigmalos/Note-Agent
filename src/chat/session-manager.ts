@@ -71,7 +71,16 @@ export class SessionStore {
     // Never persist transient streaming state as "streaming".
     const clean: ChatSession = {
       ...session,
-      messages: session.messages.map((m) => (m.status === "streaming" ? { ...m, status: "stopped" } : m)),
+      messages: session.messages.map((m) => {
+        if (m.status !== "streaming") return m;
+        // Interrupted agent runs: nothing is running or waiting any more after a reload.
+        const agent = m.agent && {
+          ...m.agent,
+          state: "cancelled" as const,
+          steps: m.agent.steps.map((s) => (s.type === "tool" && (s.status === "running" || s.status === "awaiting") ? { ...s, status: "skipped" as const } : s)),
+        };
+        return { ...m, status: "stopped", agent };
+      }),
     };
     await this.adapter.write(this.pathFor(session.id), JSON.stringify(clean, null, 1));
   }

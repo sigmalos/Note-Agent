@@ -1,5 +1,6 @@
 import type { ContextKind } from "../core/context-manager";
 import type { ReasoningEffort, Usage } from "../providers/base/provider.types";
+import type { AgentTurn } from "../agent/orchestrator";
 import type { NoteEditRecord } from "./note-edits";
 
 /** How far the chat may go with notes: answer only, propose edits for review, or apply them. */
@@ -40,8 +41,10 @@ export interface ChatMessage {
   usage?: Usage;
   /** Assistant messages: chat mode the reply was generated in. */
   mode?: ChatMode;
-  /** Assistant messages: state of the note edits it proposed (Accept / Auto). */
+  /** Assistant messages: state of the note edits it proposed (Accept / Auto, no tools). */
   edits?: NoteEditRecord[];
+  /** Assistant messages: tool calls, plan and state when the reply ran as an agent. */
+  agent?: AgentTurn;
 }
 
 export interface ChatSession {

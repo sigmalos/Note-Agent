@@ -1,4 +1,5 @@
 import { MarkdownView, Menu, Notice, Platform, Plugin, type Editor, type MenuItem, type WorkspaceLeaf } from "obsidian";
+import { ObsidianVaultPort } from "./agent/obsidian-port";
 import { ModelCatalog } from "./chat/model-catalog";
 import { SessionStore } from "./chat/session-manager";
 import { PLUGIN_ID, VIEW_TYPE_CHAT } from "./constants";
@@ -22,6 +23,10 @@ export default class AIAgentPlugin extends Plugin {
   edits!: EditManager;
   /** Models reported by each provider, for the chat model picker. */
   models!: ModelCatalog;
+  /** Vault access for agent tools. */
+  vaultPort!: ObsidianVaultPort;
+  /** "providerId|model" pairs that rejected function tools (this app session). */
+  toolsUnsupported = new Set<string>();
   private transports: Partial<Record<"node" | "fetch", HttpTransport>> = {};
 
   async onload(): Promise<void> {
@@ -35,6 +40,7 @@ export default class AIAgentPlugin extends Plugin {
     this.sessions = new SessionStore(this.app.vault.adapter, `${pluginDir}/data/sessions`);
 
     this.edits = new EditManager(this);
+    this.vaultPort = new ObsidianVaultPort(this.app, this.context);
 
     this.registerView(VIEW_TYPE_CHAT, (leaf) => new ChatView(leaf, this));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.context.track()));

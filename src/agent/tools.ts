@@ -114,7 +114,7 @@ export const TOOLS: AgentTool<any>[] = [
       const next = c.truncated ? offset + c.text.length : undefined;
       return ok(
         { path, content: c.text, length: all.length, ...(next !== undefined ? { truncated: true, next_offset: next } : {}) },
-        `${path} · ${all.length.toLocaleString()} 字${c.truncated ? "（部分）" : ""}`,
+        `${all.length.toLocaleString()} 字${c.truncated ? "（读取了一部分）" : ""}`,
         [path],
       );
     },

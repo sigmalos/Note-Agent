@@ -7,6 +7,10 @@ import type { ChatMessage, ChatSession } from "../chat/types";
 import { VIEW_TYPE_CHAT } from "../constants";
 import { buildContext, type BuiltContext, type ContextItem } from "../core/context-manager";
 import { diffStats, diffText } from "../editor/diff";
+import { applyChange, revertChange } from "../agent/changes";
+import { AgentRunner, type Approval } from "../agent/orchestrator";
+import { DEFAULT_LIMITS, type ToolStep } from "../agent/types";
+import { renderAgentTurn } from "./agent-render";
 import { QUICK_PROMPTS } from "../core/prompt-manager";
 import { estimateTokens } from "../core/token-manager";
 import type AIAgentPlugin from "../main";
@@ -79,6 +83,8 @@ export class ChatView extends ItemView {
   /** Chips rendered last time, so only newly added chips animate in. */
   private chipKeys = new Set<string>();
   private sendBusy: boolean | null = null;
+  /** Agent steps waiting for the user's decision → resolver. */
+  private approvals = new Map<string, (d: Approval) => void>();
   private composerEl!: HTMLElement;
 
   constructor(
@@ -653,6 +659,12 @@ export class ChatView extends ItemView {
       onUpdate: (sess, msg) => this.onMessageUpdate(sess, msg),
       historyBudget: () => Math.max(2000, Math.floor(this.plugin.settings.maxContextTokens / 2)),
       afterReply: (sess, msg) => this.afterReply(sess, msg),
+      runAgent: (req) => this.runAgent(req),
+      useTools: (providerId, model) => this.plugin.settings.agentTools && !this.plugin.toolsUnsupported.has(`${providerId}|${model}`),
+      onToolsUnsupported: (providerId, model) => {
+        this.plugin.toolsUnsupported.add(`${providerId}|${model}`);
+        new Notice(`${model} 不支持工具调用，本次改用普通对话（无法搜索仓库）。`);
+      },
     });
     for (const r of this.rendered.values()) r.component.unload();
     this.rendered.clear();
@@ -1018,8 +1030,18 @@ export class ChatView extends ItemView {
         });
       }
       const body = el.createDiv({ cls: "ai-agent-msg-body" });
-      if (msg.content) {
-        const sourcePath = this.plugin.context.snapshot()?.file.path ?? "";
+      const sourcePath = this.plugin.context.snapshot()?.file.path ?? "";
+      if (msg.agent && (msg.agent.steps.length || msg.agent.plan)) {
+        renderAgentTurn(body, msg.agent, msg.status === "streaming", {
+          renderMarkdown: (text, part) => void MarkdownRenderer.render(this.app, text, part, sourcePath, r.component),
+          openNote: (path) => this.openNote(path),
+          decide: (step, d) => this.approvals.get(step.id)?.(d),
+          undo: (step) => void this.toggleStep(msg, [step], "undo"),
+          reapply: (step) => void this.toggleStep(msg, [step], "reapply"),
+          undoAll: (steps) => void this.toggleStep(msg, steps, "undo"),
+          live: msg.status === "streaming",
+        });
+      } else if (msg.content) {
         const canEdit = msg.mode === "accept" || msg.mode === "auto";
         const segments = canEdit ? parseNoteEdits(msg.content) : [{ type: "text" as const, text: msg.content }];
         for (const seg of segments) {
@@ -1031,7 +1053,8 @@ export class ChatView extends ItemView {
           const part = body.createDiv({ cls: "markdown-rendered ai-agent-msg-markdown" });
           void MarkdownRenderer.render(this.app, seg.text, part, sourcePath, r.component);
         }
-      } else if (msg.status === "streaming") {
+      }
+      if (msg.status === "streaming" && !msg.content && !msg.agent?.steps.length) {
         if (!msg.reasoning) {
           const typing = body.createDiv({ cls: "ai-agent-typing", attr: { "aria-label": "正在等待模型响应" } });
           const dots = typing.createSpan({ cls: "ai-agent-typing-dots" });
@@ -1083,6 +1106,73 @@ export class ChatView extends ItemView {
     const time = new Date(msg.timestamp).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
     meta.setText(msg.usage?.totalTokens ? `${msg.usage.totalTokens} tokens · ${time}` : time);
     if (msg.modelName) meta.setAttr("aria-label", msg.modelName);
+  }
+
+  /* -------------------------------- agent -------------------------------- */
+
+  private async runAgent(req: Parameters<NonNullable<import("../chat/chat-manager").ChatControllerDeps["runAgent"]>>[0]): Promise<void> {
+    const s = this.plugin.settings;
+    const runner = new AgentRunner({
+      provider: req.provider,
+      model: req.model,
+      effort: req.session.effort,
+      mode: req.session.mode ?? "ask",
+      port: this.plugin.vaultPort,
+      limits: { ...DEFAULT_LIMITS, maxIterations: s.agentMaxIterations, maxFileOps: s.agentMaxFileOps },
+      maxReadChars: Math.max(4000, Math.min(24_000, s.maxContextTokens)),
+      signal: req.signal,
+      approve: (step) => this.requestApproval(step),
+      onUpdate: req.onUpdate,
+    });
+    try {
+      await runner.run(req.messages, req.message);
+    } finally {
+      this.approvals.clear();
+    }
+  }
+
+  /** Show the approval card and wait for a click (or stop, which aborts the run). */
+  private requestApproval(step: ToolStep): Promise<Approval> {
+    return new Promise((resolve) => {
+      this.approvals.set(step.id, (d) => {
+        this.approvals.delete(step.id);
+        resolve(d);
+      });
+      // Make sure the user sees the card.
+      window.requestAnimationFrame(() => {
+        const card = this.messagesEl.querySelector(".ai-agent-change.is-pending");
+        card?.scrollIntoView({ block: "nearest", behavior: prefersReducedMotion() ? "auto" : "smooth" });
+      });
+    });
+  }
+
+  /** Undo or re-apply agent file changes from the message cards. */
+  private async toggleStep(msg: ChatMessage, steps: ToolStep[], action: "undo" | "reapply"): Promise<void> {
+    const port = this.plugin.vaultPort;
+    let ok = 0;
+    const errors: string[] = [];
+    // Undo newest first so dependent changes unwind cleanly.
+    const ordered = action === "undo" ? [...steps].reverse() : steps;
+    for (const step of ordered) {
+      if (!step.change) continue;
+      try {
+        if (action === "undo") {
+          await revertChange(port, step.change);
+          step.reverted = true;
+        } else {
+          await applyChange(port, step.change);
+          step.reverted = false;
+          step.applied = true;
+        }
+        step.error = undefined;
+        ok++;
+      } catch (e) {
+        errors.push((e as Error).message);
+      }
+    }
+    if (errors.length) new Notice(`${ok ? `已${action === "undo" ? "撤销" : "应用"} ${ok} 处，` : ""}${errors.length} 处失败：${errors[0]}`);
+    else new Notice(action === "undo" ? `已撤销 ${ok} 处修改。` : "已重新应用。");
+    await this.persistMessage(msg);
   }
 
   /* ------------------------------ note edits ----------------------------- */

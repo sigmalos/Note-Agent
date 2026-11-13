@@ -31,6 +31,7 @@ export class AIAgentSettingTab extends PluginSettingTab {
     this.renderProviders(containerEl);
     this.renderRouting(containerEl);
     this.renderChatAndContext(containerEl);
+    this.renderAgent(containerEl);
     this.renderEditing(containerEl);
     this.renderAdvanced(containerEl);
   }
@@ -245,6 +246,37 @@ export class AIAgentSettingTab extends PluginSettingTab {
   }
 
   /* ------------------------------- Editing ------------------------------- */
+
+  private renderAgent(el: HTMLElement): void {
+    const s = this.plugin.settings;
+    new Setting(el).setName("Agent").setHeading();
+    new Setting(el)
+      .setName("启用仓库工具")
+      .setDesc(
+        "允许对话中的模型调用工具：搜索笔记、读取笔记、查看链接；在 Accept / Auto 模式下还可以新建、修改、移动和删除笔记（Accept 每次写入前确认，删除总是需要确认）。排除的文件夹对工具不可见。不支持工具调用的模型会自动改用普通对话。",
+      )
+      .addToggle((t) =>
+        t.setValue(s.agentTools).onChange(async (v) => {
+          s.agentTools = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+    const numeric = (name: string, desc: string, key: "agentMaxIterations" | "agentMaxFileOps", min: number, max: number) =>
+      new Setting(el)
+        .setName(name)
+        .setDesc(desc)
+        .addText((t) => {
+          t.inputEl.type = "number";
+          t.setValue(String(s[key])).onChange(async (v) => {
+            const n = Math.round(Number(v));
+            if (!Number.isFinite(n)) return;
+            s[key] = Math.min(max, Math.max(min, n));
+            await this.plugin.saveSettings();
+          });
+        });
+    numeric("最大执行轮次", "一次任务中模型最多调用几轮工具，超过后停止并总结（1–50）。", "agentMaxIterations", 1, 50);
+    numeric("最大文件操作数", "一次任务中最多新建、修改、移动或删除几次文件（1–100）。", "agentMaxFileOps", 1, 100);
+  }
 
   private renderEditing(el: HTMLElement): void {
     const s = this.plugin.settings;

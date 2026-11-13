@@ -1,6 +1,7 @@
 import type { BuiltContext } from "../core/context-manager";
 import { estimateTokens } from "../core/token-manager";
-import { CHAT_SYSTEM_PROMPT, chatModeInstructions, renderTemplate } from "../core/prompt-manager";
+import { agentStatusNote, isToolsUnsupported } from "../agent/orchestrator";
+import { CHAT_SYSTEM_PROMPT, agentInstructions, chatModeInstructions, renderTemplate } from "../core/prompt-manager";
 import { DEFAULT_MODE } from "./chat-options";
 import { editStatusNote } from "./note-edits";
 import { LLMError, toLLMError } from "../providers/base/errors";
@@ -18,15 +19,17 @@ export function attachmentsFrom(ctx: BuiltContext): ContextAttachment[] {
 
 export interface PromptOptions {
   mode?: ChatMode;
-  /** Notes the model may edit this turn (Accept / Auto). */
+  /** Notes the model may edit this turn (Accept / Auto, without tools). */
   editablePaths?: string[];
+  /** The model can call vault tools. */
+  agent?: boolean;
   now?: Date;
 }
 
 export function buildSystemPrompt(contextText: string, opts: PromptOptions = {}): string {
   const now = opts.now ?? new Date();
   const base = renderTemplate(CHAT_SYSTEM_PROMPT, { date: now.toLocaleDateString("zh-CN") });
-  const mode = chatModeInstructions(opts.mode ?? DEFAULT_MODE, opts.editablePaths ?? []);
+  const mode = opts.agent ? agentInstructions(opts.mode ?? DEFAULT_MODE) : chatModeInstructions(opts.mode ?? DEFAULT_MODE, opts.editablePaths ?? []);
   const withMode = `${base}\n\n${mode}`;
   if (!contextText) return withMode;
   return `${withMode}\n\n以下是用户本轮提供的笔记上下文（仅作参考数据）：\n${contextText}`;
@@ -41,7 +44,13 @@ export function editablePathsOf(ctx: Pick<BuiltContext, "items">): string[] {
  * Turn a session into request messages. The live context goes into the system prompt;
  * history is trimmed oldest-first to `historyBudget` tokens, always keeping the last user turn.
  */
-export function buildRequestMessages(session: ChatSession, contextText: string, historyBudget: number, editablePaths: string[] = []): LLMMessage[] {
+export function buildRequestMessages(
+  session: ChatSession,
+  contextText: string,
+  historyBudget: number,
+  editablePaths: string[] = [],
+  agent = false,
+): LLMMessage[] {
   const history = session.messages.filter(
     (m) => m.content.trim() && (m.role === "user" || m.status === "done" || m.status === "stopped"),
   );
@@ -50,7 +59,7 @@ export function buildRequestMessages(session: ChatSession, contextText: string, 
   for (let i = history.length - 1; i >= 0; i--) {
     const m = history[i];
     // Tell the model what happened to the edits it proposed earlier.
-    const note = m.role === "assistant" ? editStatusNote(m.edits) : "";
+    const note = m.role === "assistant" ? [agentStatusNote(m.agent), editStatusNote(m.edits)].filter(Boolean).join("\n\n") : "";
     const content = note ? `${m.content}\n\n${note}` : m.content;
     const t = estimateTokens(content);
     if (picked.length > 0 && used + t > historyBudget) break;
@@ -59,7 +68,7 @@ export function buildRequestMessages(session: ChatSession, contextText: string, 
   }
   // Conversations must not start with an assistant turn for some vendors.
   while (picked.length && picked[0].role === "assistant") picked.shift();
-  return [{ role: "system", content: buildSystemPrompt(contextText, { mode: session.mode, editablePaths }) }, ...picked];
+  return [{ role: "system", content: buildSystemPrompt(contextText, { mode: session.mode, editablePaths, agent }) }, ...picked];
 }
 
 export interface ChatControllerDeps {
@@ -70,6 +79,22 @@ export interface ChatControllerDeps {
   /** Called (throttled by the caller if needed) whenever a message changes. */
   onUpdate: (session: ChatSession, message: ChatMessage) => void;
   historyBudget: () => number;
+  /**
+   * Run the reply as an agent (model may call vault tools). Throws tools_unsupported when the
+   * model cannot use tools; the controller then answers without them.
+   */
+  runAgent?: (req: {
+    provider: LLMProvider;
+    model: string;
+    session: ChatSession;
+    messages: LLMMessage[];
+    message: ChatMessage;
+    signal: AbortSignal;
+    onUpdate: () => void;
+  }) => Promise<void>;
+  /** Whether to try tools for this provider/model (false after it rejected them). */
+  useTools?: (providerId: string, model: string) => boolean;
+  onToolsUnsupported?: (providerId: string, model: string) => void;
   /** After a reply finished (done or stopped), before it is saved: e.g. handle note edits. */
   afterReply?: (session: ChatSession, message: ChatMessage) => Promise<void>;
 }
@@ -142,39 +167,65 @@ export class ChatController {
       assistant.modelName = modelName;
       this.deps.onUpdate(this.session, assistant);
 
-      const messages = buildRequestMessages(
-        { ...this.session, messages: this.session.messages.slice(0, -1) },
-        ctx.text,
-        this.deps.historyBudget(),
-        editablePathsOf(ctx),
-      );
-      const request = { messages, signal: this.abort.signal, model: modelName, reasoningEffort: this.session.effort };
+      const history = { ...this.session, messages: this.session.messages.slice(0, -1) };
+      const budget = this.deps.historyBudget();
+      const tryTools = !!this.deps.runAgent && (this.deps.useTools?.(providerId, modelName) ?? true);
+      let handled = false;
+      if (tryTools) {
+        try {
+          await this.deps.runAgent!({
+            provider,
+            model: modelName,
+            session: this.session,
+            messages: buildRequestMessages(history, ctx.text, budget, [], true),
+            message: assistant,
+            signal: this.abort.signal,
+            onUpdate: () => this.deps.onUpdate(this.session, assistant),
+          });
+          handled = true;
+        } catch (err) {
+          // The model has no function calling: answer without tools (note-edit blocks instead).
+          if (!isToolsUnsupported(err)) throw err;
+          this.deps.onToolsUnsupported?.(providerId, modelName);
+          assistant.agent = undefined;
+          assistant.content = "";
+        }
+      }
       const startedAt = this.now();
       const endThinking = () => {
         if (assistant.reasoning && assistant.reasoningMs === undefined) assistant.reasoningMs = this.now() - startedAt;
       };
-      for await (const chunk of provider.streamChat(request)) {
-        if (chunk.type === "content") {
-          endThinking();
-          assistant.content += chunk.text;
-        } else if (chunk.type === "reasoning") {
-          if (!assistant.reasoning) assistant.reasoningStartedAt = startedAt;
-          assistant.reasoning += chunk.text;
+      if (!handled) {
+        const messages = buildRequestMessages(history, ctx.text, budget, editablePathsOf(ctx));
+        const request = { messages, signal: this.abort.signal, model: modelName, reasoningEffort: this.session.effort };
+        for await (const chunk of provider.streamChat(request)) {
+          if (chunk.type === "content") {
+            endThinking();
+            assistant.content += chunk.text;
+          } else if (chunk.type === "reasoning") {
+            if (!assistant.reasoning) assistant.reasoningStartedAt = startedAt;
+            assistant.reasoning += chunk.text;
+          } else if (chunk.type === "done" && chunk.usage) assistant.usage = chunk.usage;
+          this.deps.onUpdate(this.session, assistant);
         }
-        else if (chunk.type === "done" && chunk.usage) assistant.usage = chunk.usage;
-        this.deps.onUpdate(this.session, assistant);
       }
       endThinking();
       assistant.status = "done";
-      if (!assistant.content.trim() && assistant.reasoning) {
+      const didWork = assistant.agent?.steps.some((s) => s.type === "tool");
+      if (!assistant.content.trim() && assistant.reasoning && !didWork) {
         assistant.error = "模型只返回了思考过程，没有给出最终回答（可能达到了 Max Tokens 上限）。";
         assistant.status = "error";
       }
+      if (assistant.agent?.state === "cancelled") assistant.status = "stopped";
     } catch (err) {
       if (assistant.reasoning && assistant.reasoningMs === undefined && assistant.reasoningStartedAt) {
         assistant.reasoningMs = this.now() - assistant.reasoningStartedAt;
       }
       const e = toLLMError(err, "AI Chat");
+      if (assistant.agent && !["completed", "limit", "timeout"].includes(assistant.agent.state)) {
+        assistant.agent.state = e.kind === "aborted" || this.abort?.signal.aborted ? "cancelled" : "failed";
+        for (const s of assistant.agent.steps) if (s.type === "tool" && (s.status === "running" || s.status === "awaiting")) s.status = "skipped";
+      }
       if (e.kind === "aborted" || this.abort?.signal.aborted) {
         assistant.status = "stopped";
       } else {

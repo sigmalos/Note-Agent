@@ -145,4 +145,4 @@ export interface AgentLimits {
   maxDurationMs: number;
 }
 
-export const DEFAULT_LIMITS: AgentLimits = { maxIterations: 10, maxToolCalls: 30, maxFileOps: 10, maxDurationMs: 5 * 60_000 };
+export const DEFAULT_LIMITS: AgentLimits = { maxIterations: 20, maxToolCalls: 30, maxFileOps: 10, maxDurationMs: 5 * 60_000 };

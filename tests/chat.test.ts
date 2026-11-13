@@ -155,6 +155,56 @@ describe("chat modes", () => {
   });
 });
 
+describe("ChatController with agent", () => {
+  const deps = (p: LLMProvider, extra: Record<string, unknown>) => ({
+    getProvider: () => ({ provider: p, providerId: "fake", modelName: "Fake" }),
+    buildContext: async () => buildContext([], 1000),
+    save: async () => {},
+    onUpdate: () => {},
+    historyBudget: () => 1000,
+    ...extra,
+  });
+
+  it("runs the reply through the agent with the agent prompt", async () => {
+    const session = createSession({ mode: "accept" });
+    let prompt = "";
+    const p = fakeProvider(async function* () {});
+    const c = new ChatController(session, deps(p, {
+      runAgent: async (req: { messages: Array<{ content: string }>; message: { content: string; agent?: unknown } }) => {
+        prompt = req.messages[0].content;
+        req.message.content = "完成";
+        req.message.agent = { steps: [], state: "completed", iterations: 1 };
+      },
+    }) as never);
+    await c.send("整理笔记");
+    expect(prompt).toContain("search_vault");
+    expect(prompt).not.toContain("<<<<<<< SEARCH");
+    expect(session.messages[1]).toMatchObject({ status: "done", content: "完成" });
+  });
+
+  it("falls back to a plain reply when the model rejects tools, and remembers it", async () => {
+    const session = createSession({ mode: "accept" });
+    const unsupported: string[] = [];
+    const seen: ChatRequest[] = [];
+    const p = fakeProvider(async function* (req) {
+      seen.push(req);
+      yield { type: "content", text: "无工具回答" };
+      yield { type: "done" };
+    });
+    const c = new ChatController(session, deps(p, {
+      runAgent: async () => {
+        throw new LLMError("tools_unsupported");
+      },
+      onToolsUnsupported: (id: string, m: string) => unsupported.push(`${id}/${m}`),
+    }) as never);
+    await c.send("hi");
+    expect(unsupported).toEqual(["fake/Fake"]);
+    expect(session.messages[1]).toMatchObject({ status: "done", content: "无工具回答" });
+    expect(seen[0].tools).toBeUndefined();
+    expect(seen[0].messages[0].content).toContain("<<<<<<< SEARCH");
+  });
+});
+
 describe("ChatController", () => {
   it("measures thinking time until the answer starts", async () => {
     let t = 1000;
