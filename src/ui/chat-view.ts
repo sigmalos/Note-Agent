@@ -1173,7 +1173,10 @@ export class ChatView extends ItemView {
 
   private async runAgent(req: Parameters<NonNullable<import("../chat/chat-manager").ChatControllerDeps["runAgent"]>>[0]): Promise<void> {
     const s = this.plugin.settings;
+    // MCP tools: connect enabled servers (first use takes a moment), skip ones that fail.
+    const extraTools = s.mcpServers.some((x) => x.enabled) ? await this.plugin.mcp.agentTools() : [];
     const runner = new AgentRunner({
+      extraTools,
       provider: req.provider,
       model: req.model,
       effort: req.session.effort,

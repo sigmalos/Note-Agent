@@ -1,6 +1,6 @@
 import type { BuiltContext } from "../core/context-manager";
 import { estimateTokens } from "../core/token-manager";
-import { agentStatusNote, isToolsUnsupported } from "../agent/orchestrator";
+import { agentHistoryMessages, agentStatusNote, isToolsUnsupported } from "../agent/orchestrator";
 import { CHAT_SYSTEM_PROMPT, agentInstructions, chatModeInstructions, renderTemplate } from "../core/prompt-manager";
 import { DEFAULT_MODE } from "./chat-options";
 import { editStatusNote } from "./note-edits";
@@ -56,22 +56,28 @@ export function buildRequestMessages(
   persona = "",
 ): LLMMessage[] {
   const history = session.messages.filter(
-    (m) => m.content.trim() && (m.role === "user" || m.status === "done" || m.status === "stopped"),
+    (m) => (m.content.trim() || m.agent?.steps.some((s) => s.type === "tool")) && (m.role === "user" || m.status === "done" || m.status === "stopped"),
   );
+  // Each history message becomes a group (agent replies may expand to several messages).
   const picked: LLMMessage[] = [];
   let used = 0;
   for (let i = history.length - 1; i >= 0; i--) {
     const m = history[i];
-    // Tell the model what happened to the edits it proposed earlier.
-    const note = m.role === "assistant" ? [agentStatusNote(m.agent), editStatusNote(m.edits)].filter(Boolean).join("\n\n") : "";
-    const content = note ? `${m.content}\n\n${note}` : m.content;
-    const t = estimateTokens(content);
+    let group: LLMMessage[];
+    if (agent && m.role === "assistant" && m.agent?.steps.some((s) => s.type === "tool")) {
+      group = agentHistoryMessages(m.agent, m.content);
+    } else {
+      // Tell the model what happened to the edits it proposed earlier.
+      const note = m.role === "assistant" ? [agent ? "" : agentStatusNote(m.agent), editStatusNote(m.edits)].filter(Boolean).join("\n\n") : "";
+      group = [{ role: m.role, content: note ? `${m.content}\n\n${note}` : m.content }];
+    }
+    const t = group.reduce((n, g) => n + estimateTokens(g.content) + (g.toolCalls ? estimateTokens(JSON.stringify(g.toolCalls)) : 0), 0);
     if (picked.length > 0 && used + t > historyBudget) break;
-    picked.unshift({ role: m.role, content });
+    picked.unshift(...group);
     used += t;
   }
-  // Conversations must not start with an assistant turn for some vendors.
-  while (picked.length && picked[0].role === "assistant") picked.shift();
+  // Conversations must start with a user turn (no leading assistant / orphan tool results).
+  while (picked.length && picked[0].role !== "user") picked.shift();
   return [{ role: "system", content: buildSystemPrompt(contextText, { mode: session.mode, editablePaths, agent, persona }) }, ...picked];
 }
 

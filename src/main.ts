@@ -10,6 +10,7 @@ import { EDIT_ACTIONS, type EditAction } from "./core/prompt-manager";
 import { CompletionService } from "./editor/completion-service";
 import { PromptService } from "./prompts/prompt-service";
 import { RagService } from "./rag/rag-service";
+import { McpManager } from "./mcp/manager";
 import { EditManager } from "./editor/edit-manager";
 import { KeyStore, type SecretStorageLike } from "./settings/key-store";
 import { AIAgentSettingTab } from "./settings/settings-tab";
@@ -33,6 +34,7 @@ export default class AIAgentPlugin extends Plugin {
   completion!: CompletionService;
   prompts!: PromptService;
   rag!: RagService;
+  mcp!: McpManager;
   private transports: Partial<Record<"node" | "fetch", HttpTransport>> = {};
 
   async onload(): Promise<void> {
@@ -58,6 +60,7 @@ export default class AIAgentPlugin extends Plugin {
     this.completion = new CompletionService(this);
     this.prompts = new PromptService(this);
     this.rag = new RagService(this);
+    this.mcp = new McpManager(this);
     this.addCommand({ id: "rag-sync", name: "更新语义索引", callback: () => void this.rag.sync() });
     this.addCommand({ id: "rag-rebuild", name: "重建语义索引", callback: () => void this.rag.sync({ rebuild: true }) });
     this.addSettingTab(new AIAgentSettingTab(this.app, this));

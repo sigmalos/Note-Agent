@@ -4,6 +4,8 @@ import type { ConnectionTestResult, ProviderConfig } from "../providers/base/pro
 import { PROVIDER_PRESETS, newProviderConfig } from "../providers/presets";
 import { confirmDialog } from "../ui/components/confirm-modal";
 import { ProviderModal } from "./provider-modal";
+import { McpServerModal } from "./mcp-modal";
+import type { McpServerConfig } from "../mcp/manager";
 import { hostOf } from "../utils/url";
 import { generateId, type TaskType } from "./settings";
 
@@ -35,6 +37,7 @@ export class AIAgentSettingTab extends PluginSettingTab {
     this.renderChatAndContext(containerEl);
     this.renderPrompts(containerEl);
     this.renderAgent(containerEl);
+    this.renderMcp(containerEl);
     this.renderEditing(containerEl);
     this.renderCompletion(containerEl);
     this.renderRag(containerEl);
@@ -475,6 +478,70 @@ export class AIAgentSettingTab extends PluginSettingTab {
           }),
       );
     }
+  }
+
+  private renderMcp(el: HTMLElement): void {
+    const s = this.plugin.settings;
+    const mcp = this.plugin.mcp;
+    new Setting(el).setName("MCP 服务").setHeading();
+    el.createEl("p", {
+      cls: "setting-item-description",
+      text: "通过 MCP 为 Agent 接入外部工具（需要开启“启用仓库工具”）。启用的服务会在第一次对话时连接。",
+    });
+    for (const cfg of s.mcpServers) {
+      const st = mcp.state(cfg.id);
+      const where = cfg.transport === "stdio" ? [cfg.command, ...cfg.args].join(" ") : cfg.url;
+      const status =
+        st.state === "connected" ? `已连接 · ${st.tools.length} 个工具` : st.state === "error" ? `出错：${st.error}` : st.state === "connecting" ? "连接中…" : cfg.enabled ? "未连接" : "已停用";
+      const row = new Setting(el)
+        .setName(cfg.name)
+        .setDesc(`${where} · ${cfg.permission === "read" ? "只读" : "需要确认"} · ${status}`)
+        .setClass("ai-agent-provider-row");
+      row.addToggle((t) =>
+        t.setValue(cfg.enabled).onChange(async (v) => {
+          cfg.enabled = v;
+          if (!v) mcp.disconnect(cfg.id);
+          await this.plugin.saveSettings();
+          this.display();
+        }),
+      );
+      row.addExtraButton((b) => b.setIcon("pencil").setTooltip("编辑").onClick(() => this.openMcpEditor(cfg, false)));
+      row.addExtraButton((b) =>
+        b
+          .setIcon("trash")
+          .setTooltip("删除")
+          .onClick(async () => {
+            const ok = await confirmDialog(this.app, { title: "删除 MCP 服务", message: `确定删除“${cfg.name}”吗？`, confirmText: "删除", danger: true });
+            if (!ok) return;
+            mcp.disconnect(cfg.id);
+            if (cfg.secretId) this.plugin.keys.setSecret(cfg.secretId, "");
+            s.mcpServers = s.mcpServers.filter((x) => x.id !== cfg.id);
+            await this.plugin.saveSettings();
+            this.display();
+          }),
+      );
+    }
+    new Setting(el).setName("添加 MCP 服务").addButton((b) =>
+      b
+        .setButtonText("添加")
+        .setCta()
+        .onClick(() =>
+          this.openMcpEditor({ id: generateId("mcp"), name: "", enabled: true, transport: "stdio", command: "", args: [], url: "", permission: "write" }, true),
+        ),
+    );
+  }
+
+  private openMcpEditor(cfg: McpServerConfig, isNew: boolean): void {
+    new McpServerModal(this.app, this.plugin, cfg, isNew, async (saved, secrets) => {
+      this.plugin.mcp.setSecrets(saved, secrets);
+      const list = this.plugin.settings.mcpServers;
+      const i = list.findIndex((x) => x.id === saved.id);
+      if (i >= 0) list[i] = saved;
+      else list.push(saved);
+      this.plugin.mcp.disconnect(saved.id);
+      await this.plugin.saveSettings();
+      this.display();
+    }).open();
   }
 
   private renderEditing(el: HTMLElement): void {

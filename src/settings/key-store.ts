@@ -46,6 +46,18 @@ export class KeyStore {
     return cfg;
   }
 
+  /** Arbitrary secret (e.g. MCP env / headers JSON). Returns "" when missing. */
+  getSecret(id: string): string {
+    const v = this.secrets?.getSecret(id) ?? "";
+    return v;
+  }
+
+  setSecret(id: string, value: string): boolean {
+    if (!this.secrets) return false;
+    this.secrets.setSecret(id, value);
+    return true;
+  }
+
   /**
    * Moves any plaintext keys (e.g. seeded from .env) into secure storage.
    * Returns true when settings changed and should be saved.

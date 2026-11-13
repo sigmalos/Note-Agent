@@ -1,3 +1,4 @@
+import type { McpServerConfig } from "../mcp/manager";
 import type { ProviderConfig } from "../providers/base/provider.types";
 
 /** Task types that can be routed to different models (SRS §4.1.5). */
@@ -51,6 +52,9 @@ export interface PluginSettings {
   ragChunkOverlap: number;
   ragTopK: number;
   ragThreshold: number;
+
+  /** MCP servers whose tools the agent may use. */
+  mcpServers: McpServerConfig[];
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -80,6 +84,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   ragChunkOverlap: 120,
   ragTopK: 6,
   ragThreshold: 0.3,
+  mcpServers: [],
 };
 
 const num = (v: unknown, fallback: number | undefined, min?: number, max?: number): number | undefined => {
@@ -122,6 +127,30 @@ export function normalizeProvider(raw: unknown, index: number): ProviderConfig |
 }
 
 export const RECENT_MODELS_MAX = 5;
+
+export function normalizeMcpServer(raw: unknown, i: number): McpServerConfig | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const strMap = (v: unknown) => {
+    const out: Record<string, string> = {};
+    if (v && typeof v === "object") for (const [k, x] of Object.entries(v as Record<string, unknown>)) if (k.trim()) out[k.trim()] = String(x ?? "");
+    return out;
+  };
+  return {
+    id: typeof r.id === "string" && r.id ? r.id : `mcp-${i + 1}`,
+    name: typeof r.name === "string" && r.name.trim() ? r.name.trim() : `MCP ${i + 1}`,
+    enabled: r.enabled !== false,
+    transport: r.transport === "http" ? "http" : "stdio",
+    command: typeof r.command === "string" ? r.command : "",
+    args: Array.isArray(r.args) ? r.args.map(String) : [],
+    cwd: typeof r.cwd === "string" && r.cwd ? r.cwd : undefined,
+    url: typeof r.url === "string" ? r.url : "",
+    permission: r.permission === "read" ? "read" : "write",
+    env: r.env ? strMap(r.env) : undefined,
+    headers: r.headers ? strMap(r.headers) : undefined,
+    secretId: typeof r.secretId === "string" && r.secretId ? r.secretId : undefined,
+  };
+}
 
 /** Unique, trimmed model ids (optionally without `exclude`). */
 export function normalizeModelList(raw: unknown, exclude = ""): string[] {
@@ -187,6 +216,7 @@ export function normalizeSettings(raw: unknown): PluginSettings {
     ragChunkOverlap: num(r.ragChunkOverlap, DEFAULT_SETTINGS.ragChunkOverlap, 0, 1000)!,
     ragTopK: num(r.ragTopK, DEFAULT_SETTINGS.ragTopK, 1, 30)!,
     ragThreshold: num(r.ragThreshold, DEFAULT_SETTINGS.ragThreshold, 0, 1)!,
+    mcpServers: (Array.isArray(r.mcpServers) ? r.mcpServers : []).map(normalizeMcpServer).filter((x): x is McpServerConfig => !!x),
   };
 }
 

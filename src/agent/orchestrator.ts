@@ -7,6 +7,7 @@ import { PLAN_TOOL, toolByName, toolsForMode } from "./tools";
 import {
   ToolError,
   type AgentLimits,
+  type AgentTool,
   type AgentState,
   type AgentStep,
   type PlanStep,
@@ -48,6 +49,8 @@ export interface AgentRunOptions {
   maxReadChars: number;
   /** Semantic (vector) search, when enabled. */
   semantic?: ToolContext["semantic"];
+  /** Extra tools (MCP servers). Read tools are offered in every mode, others not in Ask. */
+  extraTools?: AgentTool<any>[];
   signal: AbortSignal;
   /** Ask the user about a write (Accept mode) or delete. Resolves when they decide. */
   approve: (step: ToolStep) => Promise<Approval>;
@@ -80,7 +83,8 @@ export class AgentRunner {
   async run(messages: LLMMessage[], target: AgentTarget): Promise<void> {
     const turn: AgentTurn = (target.agent = { steps: [], state: "analyzing", iterations: 0 });
     const convo = [...messages];
-    const tools = toolsForMode(this.o.mode, { semantic: !!this.o.semantic }).map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
+    const extra = (this.o.extraTools ?? []).filter((t) => this.o.mode !== "ask" || t.permission === "read");
+    const tools = [...toolsForMode(this.o.mode, { semantic: !!this.o.semantic }), ...extra].map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
     this.started = this.now();
     const { limits } = this.o;
 
@@ -210,8 +214,19 @@ export class AgentRunner {
 
   /* --------------------------------- tools -------------------------------- */
 
+  private lookup(name: string): AgentTool<any> | undefined {
+    return this.o.extraTools?.find((t) => t.name === name) ?? toolByName(name);
+  }
+
   private pushStep(turn: AgentTurn, call: ToolCall, args: Record<string, unknown>, status: ToolStep["status"], summary: string): ToolStep {
-    const step: ToolStep = { type: "tool", id: call.id, name: call.name, args, status, summary };
+    const tool = this.lookup(call.name);
+    let detail = "";
+    try {
+      detail = tool?.describe(args as never) ?? "";
+    } catch {
+      /* malformed args */
+    }
+    const step: ToolStep = { type: "tool", id: call.id, name: call.name, args, status, summary, label: tool?.label, icon: tool?.icon, detail };
     turn.steps.push(step);
     this.o.onUpdate();
     return step;
@@ -220,10 +235,11 @@ export class AgentRunner {
   /** Run one call; returns the text for the tool message (and whether to stop the loop). */
   private async execute(call: ToolCall, turn: AgentTurn): Promise<{ content: string; stop?: AgentState }> {
     const t0 = this.now();
-    const tool = toolByName(call.name);
+    const tool = this.lookup(call.name);
     const parsed = parseArguments(call.arguments);
     const args = parsed.ok ? parsed.value : {};
     const step = this.pushStep(turn, call, args, "running", "");
+    if (step.label === undefined && tool) step.label = tool.label;
     const fail = (status: ToolStep["status"], message: string, stop?: AgentState) => {
       step.status = status;
       step.error = message;
@@ -282,7 +298,45 @@ export class AgentRunner {
     }
 
     // write / delete
-    if (this.o.mode === "ask") return fail("denied", "Ask 模式下不能修改笔记，请切换到 Accept 或 Auto 模式。");
+    if (this.o.mode === "ask") return fail("denied", tool.plan ? "Ask 模式下不能修改笔记，请切换到 Accept 或 Auto 模式。" : "Ask 模式下不能使用该工具，请切换到 Accept 或 Auto 模式。");
+
+    // External tools with side effects (MCP): confirm in Accept, run in Auto.
+    if (!tool.plan && tool.run) {
+      if (this.o.mode === "accept" && !this.approveAll) {
+        step.status = "awaiting";
+        step.summary = "等待确认";
+        turn.state = "waiting_approval";
+        this.o.onUpdate();
+        const decision = await this.waitApproval(step);
+        if (this.o.signal.aborted) return fail("skipped", "任务已停止，未执行");
+        if (decision === "reject") {
+          step.status = "rejected";
+          step.summary = "已拒绝";
+          step.ms = this.now() - t0;
+          turn.state = "executing";
+          this.o.onUpdate();
+          return { content: "用户拒绝了这次工具调用。请不要重复同样的调用；如有需要，询问用户。" };
+        }
+        if (decision === "approve_all") this.approveAll = true;
+        turn.state = "executing";
+        step.status = "running";
+        step.summary = "";
+        this.o.onUpdate();
+      }
+      try {
+        const r = await tool.run(args, ctx);
+        step.status = r.ok ? "done" : "error";
+        step.summary = r.summary;
+        step.paths = r.paths;
+        step.result = r.output.length > 4000 ? `${r.output.slice(0, 4000)}…` : r.output;
+        if (!r.ok) step.error = r.summary;
+        step.ms = this.now() - t0;
+        this.o.onUpdate();
+        return { content: r.output };
+      } catch (e) {
+        return fail("error", `执行失败：${(e as Error).message}`);
+      }
+    }
     if (this.fileOps >= this.o.limits.maxFileOps) {
       turn.stopReason = `已达到单次任务最大文件操作数（${this.o.limits.maxFileOps}），任务已停止。`;
       return fail("skipped", "超出文件操作数上限，未执行", "limit");
@@ -356,7 +410,7 @@ export function agentStatusNote(turn: AgentTurn | undefined): string {
   for (const s of turn.steps) {
     if (s.type !== "tool" || s.name === PLAN_TOOL.name) continue;
     const tool = toolByName(s.name);
-    const what = `${tool?.label ?? s.name}${tool ? ` ${tool.describe(s.args as any)}` : ""}`.trim();
+    const what = (s.label ? `${s.label} ${s.detail ?? ""}` : `${tool?.label ?? s.name}${tool ? ` ${tool.describe(s.args as any)}` : ""}`).trim();
     const status =
       s.status === "done"
         ? s.reverted
@@ -371,5 +425,48 @@ export function agentStatusNote(turn: AgentTurn | undefined): string {
               : "（未执行）";
     lines.push(`- ${what}${status}`);
   }
-  return lines.length ? `[本轮执行的操作]\n${lines.join("\n")}` : "";
+  return lines.length ? `（系统备注，并非回答内容，回复时不要输出此类备注：这一轮实际执行过的操作）\n${lines.join("\n")}` : "";
+}
+
+/** Result text a replayed tool call gets in later requests. */
+function replayResult(s: ToolStep): string {
+  const clip = (t: string) => (t.length > 1500 ? `${t.slice(0, 1500)}…（已省略）` : t);
+  if (s.status === "rejected") return "用户拒绝了这次操作，未执行。";
+  if (s.status === "denied" || s.status === "error") return `错误：${s.error ?? s.summary}`;
+  if (s.status === "skipped" || s.status === "running" || s.status === "awaiting") return "未执行：任务已停止。";
+  if (s.change) {
+    const c = s.change;
+    const what = c.kind === "rename" ? `已将 ${c.from} 移动到 ${c.to}` : `${APPLIED_SUMMARY[c.kind]}：${c.path}`;
+    return s.reverted ? `${what}（之后已被用户撤销，当前不再生效）` : what;
+  }
+  return clip(s.result ?? s.summary ?? "完成");
+}
+
+/**
+ * Re-create an agent reply as real tool-call messages for later requests. Replaying the calls
+ * (instead of describing them in text) keeps models from imitating a textual log and
+ * "answering" without actually calling the tool again.
+ */
+export function agentHistoryMessages(turn: AgentTurn, finalContent: string): LLMMessage[] {
+  const out: LLMMessage[] = [];
+  let text = "";
+  let calls: ToolStep[] = [];
+  const flush = () => {
+    if (!calls.length) return;
+    out.push({ role: "assistant", content: text, toolCalls: calls.map((c) => ({ id: c.id, name: c.name, arguments: JSON.stringify(c.args ?? {}) })) });
+    for (const c of calls) out.push({ role: "tool", toolCallId: c.id, content: replayResult(c) });
+    text = "";
+    calls = [];
+  };
+  for (const s of turn.steps) {
+    if (s.type === "text") {
+      if (calls.length) flush();
+      text += s.text;
+    } else if (s.name !== PLAN_TOOL.name) calls.push(s);
+  }
+  flush();
+  const tail = text.trim() || (out.length ? "" : finalContent.trim());
+  if (tail) out.push({ role: "assistant", content: tail });
+  else if (out.length) out.push({ role: "assistant", content: turn.stopReason ?? "（已完成上述操作）" });
+  return out;
 }

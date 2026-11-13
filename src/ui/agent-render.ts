@@ -93,6 +93,7 @@ function renderPlan(body: HTMLElement, turn: AgentTurn): void {
 }
 
 function toolTitle(step: ToolStep): { label: string; detail: string; icon: string } {
+  if (step.label) return { label: step.label, detail: step.detail ?? "", icon: step.icon ?? "wrench" };
   const tool = toolByName(step.name);
   let detail = "";
   try {
@@ -129,6 +130,28 @@ function renderToolRow(body: HTMLElement, step: ToolStep, hooks: AgentRenderHook
   }
   if (step.error) inner.createDiv({ cls: "ai-agent-tool-error", text: step.error });
   else if (step.result) inner.createEl("pre", { cls: "ai-agent-tool-result", text: prettyResult(step.result) });
+
+  if (step.status === "awaiting") {
+    // External tool waiting for permission: show the arguments and the decision buttons.
+    row.open = true;
+    row.addClass("is-approval");
+    inner.createEl("pre", { cls: "ai-agent-tool-result is-args", text: JSON.stringify(step.args, null, 2) });
+    if (hooks.live) {
+      const actions = inner.createDiv({ cls: "ai-agent-edit-card-actions" });
+      const btn = (icons: string[], text: string, d: Approval, cls = "") => {
+        const b = actions.createEl("button", { cls });
+        setIconAny(b.createSpan(), icons);
+        b.createSpan({ text });
+        b.addEventListener("click", () => {
+          actions.querySelectorAll("button").forEach((x) => (x.disabled = true));
+          hooks.decide(step, d);
+        });
+      };
+      btn(["check"], "允许", "approve", "mod-cta");
+      btn(["check-check", "check"], "本次任务全部允许", "approve_all");
+      btn(["x"], "拒绝", "reject");
+    }
+  }
   if (!inner.childElementCount) row.addClass("is-empty");
 }
 

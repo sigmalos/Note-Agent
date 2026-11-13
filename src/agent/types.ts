@@ -119,6 +119,10 @@ export interface ToolStep {
   type: "tool";
   id: string;
   name: string;
+  /** Display info captured when the call was made (MCP tools are not in the registry later). */
+  label?: string;
+  icon?: string;
+  detail?: string;
   args: Record<string, unknown>;
   status: ToolStepStatus;
   summary: string;

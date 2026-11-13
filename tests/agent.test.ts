@@ -306,6 +306,37 @@ describe("AgentRunner", () => {
     expect((t.agent!.steps[0] as ToolStep).status).toBe("skipped");
   });
 
+  it("runs extra (MCP) tools: read ones freely, others with confirmation in Accept and not in Ask", async () => {
+    const calls: string[] = [];
+    const mk = (name: string, permission: "read" | "write") => ({
+      name,
+      label: `测试 · ${name}`,
+      icon: "plug",
+      description: name,
+      parameters: { type: "object", properties: { q: { type: "string" } } },
+      permission,
+      describe: (i: { q?: string }) => i.q ?? "",
+      run: async (i: { q?: string }) => (calls.push(`${name}:${i.q}`), { ok: true, output: `${name} ok`, summary: "完成" }),
+    });
+    const extraTools = [mk("mcp_t__lookup", "read"), mk("mcp_t__send", "write")];
+    const seen: ChatRequest[] = [];
+    const p = scripted([{ calls: [{ name: "mcp_t__lookup", args: { q: "a" } }, { name: "mcp_t__send", args: { q: "b" } }] }, { text: "完成" }], seen);
+    const answers: Approval[] = ["reject"];
+    const { r, asked } = runner(p, vault(), "accept", () => answers.shift() ?? "approve", { extraTools });
+    const t = target();
+    await r.run([{ role: "user", content: "x" }], t);
+    expect(calls).toEqual(["mcp_t__lookup:a"]);
+    expect(asked).toEqual(["mcp_t__send"]);
+    const steps = t.agent!.steps.filter((s) => s.type === "tool") as ToolStep[];
+    expect(steps.map((s) => [s.label, s.status])).toEqual([["测试 · mcp_t__lookup", "done"], ["测试 · mcp_t__send", "rejected"]]);
+    expect(seen[0].tools!.map((x) => x.name)).toEqual(expect.arrayContaining(["mcp_t__lookup", "mcp_t__send"]));
+
+    const seenAsk: ChatRequest[] = [];
+    await runner(scripted([{ text: "hi" }], seenAsk), vault(), "ask", undefined, { extraTools }).r.run([{ role: "user", content: "x" }], target());
+    expect(seenAsk[0].tools!.map((x) => x.name)).toContain("mcp_t__lookup");
+    expect(seenAsk[0].tools!.map((x) => x.name)).not.toContain("mcp_t__send");
+  });
+
   it("propagates tools_unsupported so the chat can fall back", async () => {
     const p = scripted([]);
     p.streamChat = async function* () {

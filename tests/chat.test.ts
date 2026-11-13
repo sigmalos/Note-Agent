@@ -205,6 +205,45 @@ describe("ChatController with agent", () => {
   });
 });
 
+describe("agent history replay", () => {
+  it("replays earlier tool calls as tool messages for agent requests, as a note otherwise", () => {
+    const s = createSession({ mode: "auto" });
+    s.messages.push(
+      { id: "u1", role: "user", content: "回显", timestamp: 0 },
+      {
+        id: "a1",
+        role: "assistant",
+        content: "好的结果是 x",
+        timestamp: 0,
+        status: "done",
+        agent: {
+          state: "completed",
+          iterations: 2,
+          steps: [
+            { type: "text", text: "我来调用。" },
+            { type: "tool", id: "c1", name: "update_plan", args: {}, status: "done", summary: "" },
+            { type: "tool", id: "c2", name: "mcp_t__echo", args: { text: "x" }, status: "done", summary: "echo: x", result: "echo: x", label: "t · echo", detail: "x" },
+            { type: "tool", id: "c3", name: "create_file", args: { path: "a.md" }, status: "done", summary: "已创建", change: { kind: "create", path: "a.md", after: "" }, applied: true, reverted: true },
+            { type: "text", text: "好的结果是 x" },
+          ],
+        },
+      },
+      { id: "u2", role: "user", content: "再来一次", timestamp: 0 },
+    );
+    const agentMsgs = buildRequestMessages(s, "", 10_000, [], true).slice(1);
+    expect(agentMsgs.map((m) => m.role)).toEqual(["user", "assistant", "tool", "tool", "assistant", "user"]);
+    expect(agentMsgs[1]).toMatchObject({ content: "我来调用。", toolCalls: [{ id: "c2", name: "mcp_t__echo", arguments: '{"text":"x"}' }, { id: "c3" }] });
+    expect(agentMsgs[2]).toMatchObject({ toolCallId: "c2", content: "echo: x" });
+    expect(agentMsgs[3].content).toContain("已被用户撤销");
+    const plain = buildRequestMessages(s, "", 10_000, [], false).slice(1);
+    expect(plain.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+    expect(plain[1].content).toContain("系统备注");
+    // trimming never leaves an orphan tool message first
+    const tight = buildRequestMessages(s, "", 1, [], true).slice(1);
+    expect(tight[0].role).toBe("user");
+  });
+});
+
 describe("ChatController", () => {
   it("measures thinking time until the answer starts", async () => {
     let t = 1000;
