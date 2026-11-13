@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeSettings } from "../src/settings/settings";
+import { normalizeModelList, normalizeSettings } from "../src/settings/settings";
 import { KeyStore, type SecretStorageLike } from "../src/settings/key-store";
 import { LLMRouter } from "../src/core/llm-router";
 import type { HttpTransport } from "../src/core/http";
@@ -24,6 +24,13 @@ describe("normalizeSettings", () => {
     expect(s.defaultProviderId).toBe("a");
     expect(s.taskModels).toEqual({ chat: "a", editing: "" });
     expect(s.excludedFolders).toEqual(["Private"]);
+  });
+
+  it("keeps a clean list of extra models per provider", () => {
+    const s = normalizeSettings({ providers: [{ id: "a", model: "m1", models: [" m2 ", "m1", "", "m2", "m3"] }] });
+    expect(s.providers[0].models).toEqual(["m2", "m3"]);
+    expect(normalizeModelList("a, b\nc\n\na", "c")).toEqual(["a", "b"]);
+    expect(normalizeModelList(undefined)).toEqual([]);
   });
 });
 

@@ -1,4 +1,4 @@
-import type { HttpTransport } from "../../core/http";
+import type { HttpResponse, HttpTransport } from "../../core/http";
 import { SSEParser } from "../../core/sse";
 import { ThinkTagSplitter, splitThinkTags } from "../../core/think-filter";
 import { LLMError, errorFromStatus, toLLMError } from "../base/errors";
@@ -11,6 +11,7 @@ import type {
   ModelInfo,
   ProviderCapabilities,
   ProviderConfig,
+  ReasoningEffort,
   Usage,
 } from "../base/provider.types";
 
@@ -124,10 +125,8 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
     this.assertValid();
-    const res = await this.post(request, false);
-    const text = await res.text();
-    if (res.status < 200 || res.status >= 300) throw errorFromStatus(res.status, text, "模型请求");
-    return parseCompletionJSON(text);
+    const res = await this.send(request, false, "模型请求");
+    return parseCompletionJSON(await res.text());
   }
 
   async *streamChat(request: ChatRequest): AsyncIterable<ChatChunk> {
@@ -140,10 +139,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       return;
     }
 
-    const res = await this.post(request, true);
-    if (res.status < 200 || res.status >= 300) {
-      throw errorFromStatus(res.status, await res.text(), "流式请求");
-    }
+    const res = await this.send(request, true, "流式请求");
 
     const contentType = res.headers["content-type"] ?? "";
     if (contentType.includes("application/json")) {
@@ -228,12 +224,40 @@ export class OpenAICompatibleProvider implements LLMProvider {
     return h;
   }
 
-  private post(request: ChatRequest, stream: boolean) {
+  private modelFor(request: ChatRequest): string {
+    return (request.model?.trim() || this.config.model).trim();
+  }
+
+  /**
+   * POST and return a 2xx response, otherwise throw. When the server rejects
+   * `reasoning_effort` (unknown parameter or value), retry with a weaker value and then
+   * without it, and remember what worked for this endpoint + model.
+   */
+  private async send(request: ChatRequest, stream: boolean, where: string): Promise<HttpResponse> {
+    const wanted = request.reasoningEffort ? EFFORT_WIRE[request.reasoningEffort] : undefined;
+    const key = `${resolveApiRoot(this.config.endpoint)}|${this.modelFor(request)}|${wanted}`;
+    const remembered = effortFallbacks.get(key);
+    const candidates = wanted === undefined ? [undefined] : remembered !== undefined ? [remembered] : effortCandidates(wanted);
+    for (let i = 0; ; i++) {
+      const effort = candidates[i];
+      const res = await this.post(request, stream, effort ?? undefined);
+      if (res.status >= 200 && res.status < 300) {
+        if (wanted !== undefined) effortFallbacks.set(key, effort ?? null);
+        return res;
+      }
+      const text = await res.text();
+      const rejected = effort && res.status >= 400 && res.status < 500 && /reasoning[_ -]?effort/i.test(text);
+      if (!rejected || i === candidates.length - 1) throw errorFromStatus(res.status, text, where);
+    }
+  }
+
+  private post(request: ChatRequest, stream: boolean, effort?: string) {
     const body: Record<string, unknown> = {
-      model: this.config.model.trim(),
+      model: this.modelFor(request),
       messages: request.messages,
       stream,
     };
+    if (effort) body.reasoning_effort = effort;
     const temperature = request.temperature ?? this.config.temperature;
     const maxTokens = request.maxTokens ?? this.config.maxTokens;
     const topP = request.topP ?? this.config.topP;
@@ -250,6 +274,21 @@ export class OpenAICompatibleProvider implements LLMProvider {
       timeoutMs: this.timeoutMs(),
     });
   }
+}
+
+/** Wire values for `reasoning_effort`. "max" maps to "xhigh" (accepted by most gateways). */
+export const EFFORT_WIRE: Record<ReasoningEffort, string> = { low: "low", medium: "medium", high: "high", max: "xhigh" };
+
+/** Values to try in order when the server rejects one; `null` = omit the parameter. */
+export function effortCandidates(wire: string): Array<string | null> {
+  return wire === "xhigh" ? ["xhigh", "high", null] : [wire, null];
+}
+
+/** endpoint|model|wanted → value that worked (null = parameter unsupported). Per app session. */
+const effortFallbacks = new Map<string, string | null>();
+
+export function resetEffortFallbacks(): void {
+  effortFallbacks.clear();
 }
 
 function mapUsage(u: any): Usage {

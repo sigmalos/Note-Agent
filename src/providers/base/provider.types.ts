@@ -20,7 +20,10 @@ export interface ProviderConfig {
    */
   apiKey?: string;
   apiKeySecretId?: string;
+  /** Default model for this service. */
   model: string;
+  /** Extra model ids offered in the chat model picker (besides `model`). */
+  models?: string[];
   temperature?: number;
   maxTokens?: number;
   topP?: number;
@@ -43,8 +46,14 @@ export interface Usage {
   totalTokens?: number;
 }
 
+/** Reasoning depth for thinking models; sent as OpenAI-style `reasoning_effort`. */
+export type ReasoningEffort = "low" | "medium" | "high" | "max";
+
 export interface ChatRequest {
   messages: LLMMessage[];
+  /** Override the configured model for this request. */
+  model?: string;
+  reasoningEffort?: ReasoningEffort;
   temperature?: number;
   maxTokens?: number;
   topP?: number;

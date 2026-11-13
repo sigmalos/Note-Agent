@@ -3,7 +3,7 @@ import https from "node:https";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createFetchTransport, createNodeTransport, type HttpTransport } from "../src/core/http";
-import { OpenAICompatibleProvider, resolveApiRoot } from "../src/providers/openai/openai.provider";
+import { OpenAICompatibleProvider, resetEffortFallbacks, resolveApiRoot } from "../src/providers/openai/openai.provider";
 import type { ChatChunk, ProviderConfig } from "../src/providers/base/provider.types";
 import { LLMError } from "../src/providers/base/errors";
 
@@ -106,6 +106,52 @@ describe.each(transports)("OpenAICompatibleProvider over %s transport", (_name, 
     expect(last.headers.authorization).toBe("Bearer sk-test-key-123456");
     expect(last.headers["x-extra"]).toBe("1");
     expect(last.body).toMatchObject({ model: "test-model", stream: true, temperature: 0.3 });
+  });
+
+  it("sends a per-request model override and reasoning effort", async () => {
+    resetEffortFallbacks();
+    handler = (_req, _body, res) => sse(res, [delta({ content: "ok" }, "stop")]);
+    const p = new OpenAICompatibleProvider(cfg(), makeTransport());
+    await collect(p.streamChat({ messages: [{ role: "user", content: "x" }], model: "other-model", reasoningEffort: "max" }));
+    expect(requests[requests.length - 1].body).toMatchObject({ model: "other-model", reasoning_effort: "xhigh" });
+    await collect(p.streamChat({ messages: [{ role: "user", content: "x" }] }));
+    const plain = requests[requests.length - 1].body;
+    expect(plain.model).toBe("test-model");
+    expect(plain).not.toHaveProperty("reasoning_effort");
+  });
+
+  it("falls back when the server rejects reasoning_effort, and remembers it", async () => {
+    resetEffortFallbacks();
+    const seen: unknown[] = [];
+    handler = (_req, body, res) => {
+      seen.push(body.reasoning_effort);
+      if (body.reasoning_effort) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: { message: "'reasoning_effort' must be one of: 'low', 'medium', 'high'" } }));
+        return;
+      }
+      sse(res, [delta({ content: "ok" }, "stop")]);
+    };
+    const p = new OpenAICompatibleProvider(cfg({ model: "no-effort" }), makeTransport());
+    const out = await collect(p.streamChat({ messages: [{ role: "user", content: "x" }], reasoningEffort: "max" }));
+    expect(out.content).toBe("ok");
+    expect(seen).toEqual(["xhigh", "high", undefined]);
+    seen.length = 0;
+    await collect(p.streamChat({ messages: [{ role: "user", content: "x" }], reasoningEffort: "max" }));
+    expect(seen).toEqual([undefined]);
+  });
+
+  it("does not retry other 400 errors", async () => {
+    resetEffortFallbacks();
+    let calls = 0;
+    handler = (_req, _body, res) => {
+      calls++;
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "messages is required" } }));
+    };
+    const p = new OpenAICompatibleProvider(cfg(), makeTransport());
+    await expect(collect(p.streamChat({ messages: [], reasoningEffort: "low" }))).rejects.toBeInstanceOf(LLMError);
+    expect(calls).toBe(1);
   });
 
   it("splits inline <think> tags out of streamed content", async () => {

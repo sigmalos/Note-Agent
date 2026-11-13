@@ -2,7 +2,7 @@ import { App, ButtonComponent, Modal, Notice, Setting, TextComponent } from "obs
 import type AIAgentPlugin from "../main";
 import type { ProviderConfig } from "../providers/base/provider.types";
 import { getPreset } from "../providers/presets";
-import { formatHeaderLines, normalizeProvider, parseHeaderLines } from "./settings";
+import { formatHeaderLines, normalizeModelList, normalizeProvider, parseHeaderLines } from "./settings";
 
 /** Create / edit a model service configuration (SRS §4.1.3). */
 export class ProviderModal extends Modal {
@@ -74,7 +74,7 @@ export class ProviderModal extends Modal {
 
     const modelSetting = new Setting(contentEl)
       .setName("Model ID")
-      .setDesc("模型标识，例如 deepseek-chat、glm-4-flash、qwen-plus。可点击右侧按钮从服务端获取列表。")
+      .setDesc("默认使用的模型，例如 deepseek-chat、glm-4-flash、qwen-plus。可点击右侧按钮从服务端获取列表。")
       .addText((t) => {
         this.modelInput = t;
         t.setPlaceholder("model-id").setValue(this.draft.model).onChange((v) => (this.draft.model = v.trim()));
@@ -98,6 +98,16 @@ export class ProviderModal extends Modal {
           }
         }),
     );
+
+    new Setting(contentEl)
+      .setName("常用模型")
+      .setDesc("每行一个，在对话的模型列表中置顶显示。服务端返回的其余模型也可以在列表中搜索选择。")
+      .addTextArea((t) => {
+        t.inputEl.rows = 3;
+        t.setPlaceholder("deepseek-reasoner\nqwen-max")
+          .setValue((this.draft.models ?? []).join("\n"))
+          .onChange((v) => (this.draft.models = normalizeModelList(v)));
+      });
 
     contentEl.createEl("h4", { text: "生成参数（可选）" });
     const numberSetting = (name: string, desc: string, key: "temperature" | "maxTokens" | "topP" | "timeout", placeholder: string) =>

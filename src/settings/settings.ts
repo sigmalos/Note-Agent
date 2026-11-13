@@ -68,6 +68,7 @@ export function normalizeProvider(raw: unknown, index: number): ProviderConfig |
     apiKey: typeof r.apiKey === "string" ? r.apiKey.trim() : "",
     apiKeySecretId: typeof r.apiKeySecretId === "string" && r.apiKeySecretId ? r.apiKeySecretId : undefined,
     model: typeof r.model === "string" ? r.model.trim() : "",
+    models: normalizeModelList(r.models, typeof r.model === "string" ? r.model.trim() : ""),
     temperature: num(r.temperature, undefined, 0, 2),
     maxTokens: num(r.maxTokens, undefined, 1),
     topP: num(r.topP, undefined, 0, 1),
@@ -75,6 +76,17 @@ export function normalizeProvider(raw: unknown, index: number): ProviderConfig |
     customHeaders: headers,
     enableStreaming: r.enableStreaming !== false,
   };
+}
+
+/** Unique, trimmed model ids, without the default model (it is always offered anyway). */
+export function normalizeModelList(raw: unknown, defaultModel = ""): string[] {
+  const list = Array.isArray(raw) ? raw : typeof raw === "string" ? raw.split(/[\n,]/) : [];
+  const out: string[] = [];
+  for (const m of list) {
+    const id = String(m ?? "").trim();
+    if (id && id !== defaultModel && !out.includes(id)) out.push(id);
+  }
+  return out;
 }
 
 /** Merge persisted data with defaults and repair anything inconsistent. */
