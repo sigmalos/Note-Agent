@@ -55,7 +55,7 @@ export class McpClient {
     private readonly timeoutMs = 30_000,
   ) {}
 
-  async connect(clientInfo = { name: "obsidian-ai-agent", version: "0.1.0" }): Promise<void> {
+  async connect(clientInfo = { name: "note-agent", version: "0.0.0" }): Promise<void> {
     await this.transport.start(
       (m) => this.onMessage(m),
       (reason) => this.fail(reason),

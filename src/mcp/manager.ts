@@ -134,7 +134,7 @@ export class McpManager {
     let timer: number | undefined;
     try {
       await Promise.race([
-        client.connect({ name: "obsidian-ai-agent", version: this.plugin.manifest.version }),
+        client.connect({ name: "note-agent", version: this.plugin.manifest.version }),
         new Promise((_, reject) => (timer = window.setTimeout(() => reject(new Error("连接超时")), CONNECT_TIMEOUT_MS))),
       ]);
     } catch (e) {

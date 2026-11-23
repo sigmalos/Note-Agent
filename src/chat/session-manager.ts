@@ -45,7 +45,7 @@ export function deriveTitle(text: string): string {
 
 /**
  * Stores each session as JSON under the plugin data directory (SRS §4.2.4):
- *   .obsidian/plugins/obsidian-ai-agent/data/sessions/<id>.json
+ *   .obsidian/plugins/note-agent/data/sessions/<id>.json
  */
 export class SessionStore {
   constructor(

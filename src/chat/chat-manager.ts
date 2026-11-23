@@ -250,7 +250,7 @@ export class ChatController {
         try {
           await this.deps.afterReply?.(this.session, assistant);
         } catch (err) {
-          console.error("[AI Agent] afterReply failed", err);
+          console.error("[Note Agent] afterReply failed", err);
         }
       }
       this.session.updatedAt = Date.now();

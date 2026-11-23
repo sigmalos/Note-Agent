@@ -1,6 +1,7 @@
 import { MarkdownView, Menu, Notice, Platform, Plugin, type Editor, type MenuItem, type WorkspaceLeaf } from "obsidian";
 import { ObsidianVaultPort } from "./agent/obsidian-port";
 import { ModelCatalog } from "./chat/model-catalog";
+import { migrateLegacyFolder } from "./migrate";
 import { SessionStore } from "./chat/session-manager";
 import { PLUGIN_ID, VIEW_TYPE_CHAT } from "./constants";
 import { ObsidianContext } from "./context/obsidian-context";
@@ -40,6 +41,7 @@ export default class AIAgentPlugin extends Plugin {
   async onload(): Promise<void> {
     const secrets = (this.app as unknown as { secretStorage?: SecretStorageLike }).secretStorage ?? null;
     this.keys = new KeyStore(secrets);
+    await this.migrateFromLegacyId();
     await this.loadSettings();
     this.router = new LLMRouter(() => this.settings, () => this.getTransport(), this.keys);
     this.models = new ModelCatalog(async (cfg) => (await this.router.providerFor(cfg).listModels()).map((m) => m.id));
@@ -72,6 +74,21 @@ export default class AIAgentPlugin extends Plugin {
   }
 
   /* ------------------------------- settings ------------------------------ */
+
+  /** Bring over settings and chats from the folder used under the old plugin id (≤ 0.2.0). */
+  private async migrateFromLegacyId(): Promise<void> {
+    const dir = this.manifest.dir;
+    if (!dir) return;
+    try {
+      const r = await migrateLegacyFolder(this.app.vault.adapter, `${this.app.vault.configDir}/plugins`, dir);
+      if (r) {
+        logger.info(`migrated ${r.files} file(s) from plugins/${r.from}`);
+        new Notice(`Note Agent：已从旧版插件（${r.from}）迁移设置与会话。确认无误后，可在“第三方插件”中删除旧插件。`, 10000);
+      }
+    } catch (e) {
+      logger.warn("migration from the old plugin folder failed", e);
+    }
+  }
 
   async loadSettings(): Promise<void> {
     this.settings = normalizeSettings(await this.loadData());

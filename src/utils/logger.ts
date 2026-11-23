@@ -6,7 +6,7 @@ type Level = "debug" | "info" | "warn" | "error";
 export class Logger {
   debugEnabled = false;
 
-  constructor(private readonly prefix = "[AI Agent]") {}
+  constructor(private readonly prefix = "[Note Agent]") {}
 
   debug(...args: unknown[]): void {
     if (this.debugEnabled) this.emit("debug", args);
