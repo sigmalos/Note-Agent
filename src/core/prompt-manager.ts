@@ -313,7 +313,7 @@ export function buildEditUserPrompt(input: EditPromptInput): string {
  * strips an outer ```markdown fence or echoed <selection> tags the model may add.
  */
 export function cleanEditOutput(output: string, original: string): string {
-  let out = output.replace(/^﻿/, "");
+  let out = output.replace(/^\uFEFF/, "");
   const trimmed = out.trim();
   const fence = trimmed.match(/^```(?:markdown|md|text)?[ \t]*\n([\s\S]*?)\n```$/i);
   if (fence && !original.trim().startsWith("```")) out = fence[1];

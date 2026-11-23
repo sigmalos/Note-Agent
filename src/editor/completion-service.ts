@@ -113,7 +113,7 @@ export class CompletionService {
   }
 
   private cmOf(view: MarkdownView): EditorView | null {
-    return ((view.editor as unknown as { cm?: EditorView }).cm ?? null) as EditorView | null;
+    return ((view.editor as unknown as { cm?: EditorView }).cm ?? null);
   }
 
   private registerCommands(): void {

@@ -3,6 +3,7 @@ import { diffStats, diffText, type DiffPart } from "../editor/diff";
 import type { EditSession, EditTask } from "../editor/edit-session";
 import type { LocateResult } from "../editor/edit-target";
 import { flash } from "./components/motion";
+import { runAsync } from "../utils/async";
 
 const MODE_LABEL = {
   replace: "替换原文",
@@ -236,11 +237,11 @@ export class DiffPreviewModal extends Modal {
     fill(pane.createDiv({ cls: "ai-agent-diff-text" }));
   }
 
-  private button(parent: HTMLElement, icon: string, label: string, onClick: () => void): HTMLButtonElement {
+  private button(parent: HTMLElement, icon: string, label: string, onClick: () => void | Promise<void>): HTMLButtonElement {
     const b = parent.createEl("button", { cls: "ai-agent-diff-btn" });
     setIcon(b.createSpan(), icon);
     b.createSpan({ text: label });
-    b.addEventListener("click", onClick);
+    b.addEventListener("click", () => runAsync(onClick()));
     return b;
   }
 

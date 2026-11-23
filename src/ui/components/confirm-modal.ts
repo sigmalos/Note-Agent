@@ -25,7 +25,8 @@ export function confirmDialog(
               resolve(true);
               this.close();
             });
-            if (opts.danger) b.setWarning();
+            // Destructive style without setWarning (deprecated) or setDestructive (Obsidian 1.13+ only).
+            if (opts.danger) b.buttonEl.addClass("mod-warning");
             else b.setCta();
           });
       }

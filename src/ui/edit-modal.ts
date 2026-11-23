@@ -1,6 +1,7 @@
 import { App, Modal } from "obsidian";
 import { EDIT_ACTIONS, customAction, type EditAction } from "../core/prompt-manager";
 import { setIconAny } from "./components/icons";
+import { runAsync } from "../utils/async";
 
 /**
  * "AI Edit" popup (SRS §5.1.2): pick a preset action or type a custom instruction.
@@ -51,10 +52,13 @@ export class EditPromptModal extends Modal {
         const b = mine.createEl("button", { cls: "ai-agent-edit-preset", attr: { "aria-label": c.description } });
         setIconAny(b.createSpan(), [c.icon, "scroll-text"]);
         b.createSpan({ text: c.label });
-        b.addEventListener("click", async () => {
-          const action = await c.choose();
-          if (action) this.choose(action);
-        });
+        b.addEventListener("click", () =>
+          runAsync(
+            c.choose().then((action) => {
+              if (action) this.choose(action);
+            }),
+          ),
+        );
       }
     }
 

@@ -176,7 +176,7 @@ export function findTarget(doc: string, search: string): MatchResult {
     .join("\\s+");
   const re = new RegExp(pattern, "g");
   const hits = [...doc.matchAll(re)];
-  if (hits.length === 1) return { ok: true, from: hits[0].index!, to: hits[0].index! + hits[0][0].length, append: false };
+  if (hits.length === 1) return { ok: true, from: hits[0].index, to: hits[0].index + hits[0][0].length, append: false };
   if (hits.length > 1) return { ok: false, reason: "要修改的原文在笔记中出现了多次，无法确定是哪一处。" };
   return { ok: false, reason: "没有在笔记中找到要修改的原文（笔记可能已被修改，或模型引用的原文不准确）。" };
 }

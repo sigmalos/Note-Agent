@@ -1,5 +1,6 @@
 import type AIAgentPlugin from "../main";
 import type { AgentTool, ToolPermission } from "../agent/types";
+import { isObject, parseJson, text } from "../utils/json";
 import { registerSecret } from "../utils/redact";
 import { HttpMcpTransport, McpClient, StdioTransport, type McpTool } from "./client";
 
@@ -38,6 +39,12 @@ export type McpServerState =
   | { state: "error"; error: string };
 
 const CONNECT_TIMEOUT_MS = 20_000;
+
+function stringMap(v: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (isObject(v)) for (const [k, x] of Object.entries(v)) out[k] = text(x);
+  return out;
+}
 
 /** OpenAI function names: ^[a-zA-Z0-9_-]{1,64}$ */
 export function mcpToolName(server: string, tool: string): string {
@@ -91,12 +98,8 @@ export class McpManager {
 
   secrets(cfg: McpServerConfig): McpServerSecrets {
     if (cfg.secretId) {
-      try {
-        const v = JSON.parse(this.plugin.keys.getSecret(cfg.secretId) || "{}");
-        return { env: v.env ?? {}, headers: v.headers ?? {} };
-      } catch {
-        /* fall through */
-      }
+      const v = parseJson(this.plugin.keys.getSecret(cfg.secretId) || "{}");
+      if (isObject(v)) return { env: stringMap(v.env), headers: stringMap(v.headers) };
     }
     return { env: cfg.env ?? {}, headers: cfg.headers ?? {} };
   }
@@ -122,7 +125,7 @@ export class McpManager {
       if (!cfg.command.trim()) throw new Error("未填写启动命令");
       const cp = (window.require?.("child_process") ?? null) as typeof import("node:child_process") | null;
       if (!cp) throw new Error("当前平台不支持本地 MCP 服务（需要桌面版 Obsidian）");
-      const proc = (globalThis as unknown as { process?: NodeJS.Process }).process;
+      const proc = (window as unknown as { process?: NodeJS.Process }).process;
       const baseEnv = (proc?.env ?? {}) as Record<string, string>;
       const fullEnv = { ...baseEnv, PATH: augmentedPath(baseEnv.PATH, baseEnv.HOME, proc?.platform ?? "darwin"), ...env };
       const adapter = this.plugin.app.vault.adapter as unknown as { getBasePath?: () => string };
@@ -200,12 +203,12 @@ export class McpManager {
       parameters: { type: "object", ...schema },
       permission: cfg.permission,
       describe: (input: Record<string, unknown>) => {
-        const v = Object.values(input ?? {}).find((x) => typeof x === "string") as string | undefined;
+        const v = Object.values(input ?? {}).find((x): x is string => typeof x === "string");
         return v ? (v.length > 40 ? `${v.slice(0, 40)}…` : v) : "";
       },
       run: async (input, ctx) => {
         const client = await this.client(cfg);
-        const r = await client.callTool(t.name, input as Record<string, unknown>, ctx.signal);
+        const r = await client.callTool(t.name, input, ctx.signal);
         const text = r.text.length > ctx.maxReadChars ? `${r.text.slice(0, ctx.maxReadChars)}\n…（结果过长，已截断）` : r.text;
         const firstLine = r.text.trim().split("\n")[0] ?? "";
         return { ok: !r.isError, output: text || "（无输出）", summary: r.isError ? `失败：${firstLine.slice(0, 60)}` : firstLine.slice(0, 60) || "完成" };

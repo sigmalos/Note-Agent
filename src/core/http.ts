@@ -110,25 +110,25 @@ export function createNodeTransport(mods: { http: NodeHttpModule; https: NodeHtt
 
 /* ----------------------------- fetch transport ---------------------------- */
 
-export function createFetchTransport(fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis)): HttpTransport {
+export function createFetchTransport(fetchImpl: typeof fetch = window.fetch.bind(window)): HttpTransport {
   return async (req) => {
     const controller = new AbortController();
     const onAbort = () => controller.abort();
     if (req.signal?.aborted) throw new LLMError("aborted");
     req.signal?.addEventListener("abort", onAbort, { once: true });
 
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: number | undefined;
     let timedOut = false;
     const arm = () => {
       if (!req.timeoutMs) return;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
         timedOut = true;
         controller.abort();
       }, req.timeoutMs);
     };
     const done = () => {
-      if (timer) clearTimeout(timer);
+      if (timer) window.clearTimeout(timer);
       req.signal?.removeEventListener("abort", onAbort);
     };
     const mapErr = (err: unknown) => {

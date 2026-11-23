@@ -1,5 +1,6 @@
 import type { HttpTransport } from "../core/http";
 import { SSEParser } from "../core/sse";
+import { arr, isObject, num, obj, parseJson, str, text } from "../utils/json";
 
 /**
  * Minimal MCP client (SRS §2.1 G15 / V2.0): initialize → tools/list → tools/call over
@@ -25,7 +26,7 @@ interface JsonRpcMessage {
   id?: number | string;
   method?: string;
   params?: unknown;
-  result?: any;
+  result?: unknown;
   error?: { code: number; message: string; data?: unknown };
 }
 
@@ -45,7 +46,7 @@ export class McpError extends Error {
 
 export class McpClient {
   private nextId = 1;
-  private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void; timer: number | ReturnType<typeof setTimeout> }>();
+  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: number }>();
   private closed: string | null = null;
   serverInfo: { name?: string; version?: string } = {};
   instructions = "";
@@ -60,9 +61,10 @@ export class McpClient {
       (m) => this.onMessage(m),
       (reason) => this.fail(reason),
     );
-    const r = await this.request("initialize", { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: {}, clientInfo });
-    this.serverInfo = r?.serverInfo ?? {};
-    this.instructions = typeof r?.instructions === "string" ? r.instructions : "";
+    const r = obj(await this.request("initialize", { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: {}, clientInfo }));
+    const info = obj(r.serverInfo);
+    this.serverInfo = { name: str(info.name), version: str(info.version) };
+    this.instructions = str(r.instructions) ?? "";
     await this.transport.send({ jsonrpc: "2.0", method: "notifications/initialized" });
   }
 
@@ -70,9 +72,20 @@ export class McpClient {
     const tools: McpTool[] = [];
     let cursor: string | undefined;
     for (let page = 0; page < 20; page++) {
-      const r = await this.request("tools/list", cursor ? { cursor } : {});
-      for (const t of r?.tools ?? []) if (t?.name) tools.push(t);
-      cursor = r?.nextCursor;
+      const r = obj(await this.request("tools/list", cursor ? { cursor } : {}));
+      for (const raw of arr(r.tools)) {
+        const t = obj(raw);
+        const name = str(t.name);
+        if (!name) continue;
+        const ann = obj(t.annotations);
+        tools.push({
+          name,
+          description: str(t.description),
+          inputSchema: isObject(t.inputSchema) ? t.inputSchema : undefined,
+          annotations: { readOnlyHint: ann.readOnlyHint === true, destructiveHint: ann.destructiveHint === true, title: str(ann.title) },
+        });
+      }
+      cursor = str(r.nextCursor);
       if (!cursor) break;
     }
     return tools;
@@ -80,7 +93,7 @@ export class McpClient {
 
   async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<McpCallResult> {
     const r = await this.request("tools/call", { name, arguments: args }, signal);
-    return { text: contentToText(r), isError: r?.isError === true };
+    return { text: contentToText(r), isError: obj(r).isError === true };
   }
 
   close(): void {
@@ -92,11 +105,11 @@ export class McpClient {
     return this.closed !== null;
   }
 
-  private request(method: string, params: unknown, signal?: AbortSignal): Promise<any> {
+  private request(method: string, params: unknown, signal?: AbortSignal): Promise<unknown> {
     if (this.closed) return Promise.reject(new McpError(`MCP 连接已关闭：${this.closed}`));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const timer = window.setTimeout(() => {
         this.pending.delete(id);
         reject(new McpError(`MCP 请求超时：${method}`));
       }, this.timeoutMs);
@@ -105,7 +118,7 @@ export class McpClient {
         "abort",
         () => {
           if (!this.pending.has(id)) return;
-          clearTimeout(timer);
+          window.clearTimeout(timer);
           this.pending.delete(id);
           void this.transport.send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: id, reason: "aborted" } }).catch(() => {});
           reject(new McpError("已取消"));
@@ -113,7 +126,7 @@ export class McpClient {
         { once: true },
       );
       this.transport.send({ jsonrpc: "2.0", id, method, params }).catch((e) => {
-        clearTimeout(timer);
+        window.clearTimeout(timer);
         this.pending.delete(id);
         reject(e instanceof Error ? e : new McpError(String(e)));
       });
@@ -129,7 +142,7 @@ export class McpClient {
     if (typeof m.id !== "number") return; // notifications (logging, progress…)
     const p = this.pending.get(m.id);
     if (!p) return;
-    clearTimeout(p.timer);
+    window.clearTimeout(p.timer);
     this.pending.delete(m.id);
     if (m.error) p.reject(new McpError(m.error.message || "MCP 错误", m.error.code));
     else p.resolve(m.result);
@@ -139,24 +152,35 @@ export class McpClient {
     if (this.closed) return;
     this.closed = reason;
     for (const p of this.pending.values()) {
-      clearTimeout(p.timer);
+      window.clearTimeout(p.timer);
       p.reject(new McpError(`MCP 连接已关闭：${reason}`));
     }
     this.pending.clear();
   }
 }
 
-export function contentToText(result: any): string {
+export function contentToText(result: unknown): string {
+  const r = obj(result);
   const parts: string[] = [];
-  for (const c of Array.isArray(result?.content) ? result.content : []) {
-    if (c?.type === "text" && typeof c.text === "string") parts.push(c.text);
-    else if (c?.type === "image") parts.push(`[图片 ${c.mimeType ?? ""}]`);
-    else if (c?.type === "audio") parts.push(`[音频 ${c.mimeType ?? ""}]`);
-    else if (c?.type === "resource" && c.resource) parts.push(typeof c.resource.text === "string" ? c.resource.text : `[资源 ${c.resource.uri ?? ""}]`);
-    else if (c?.type === "resource_link") parts.push(`[链接 ${c.name ?? ""} ${c.uri ?? ""}]`);
+  for (const raw of arr(r.content)) {
+    const c = obj(raw);
+    const mime = str(c.mimeType) ?? "";
+    if (c.type === "text" && typeof c.text === "string") parts.push(c.text);
+    else if (c.type === "image") parts.push(`[图片 ${mime}]`);
+    else if (c.type === "audio") parts.push(`[音频 ${mime}]`);
+    else if (c.type === "resource" && isObject(c.resource)) parts.push(str(c.resource.text) ?? `[资源 ${text(c.resource.uri)}]`);
+    else if (c.type === "resource_link") parts.push(`[链接 ${text(c.name)} ${text(c.uri)}]`);
   }
-  if (!parts.length && result?.structuredContent !== undefined) parts.push(JSON.stringify(result.structuredContent));
+  if (!parts.length && r.structuredContent !== undefined) parts.push(JSON.stringify(r.structuredContent));
   return parts.join("\n");
+}
+
+/** A JSON-RPC message from untrusted input, or null. */
+export function toRpcMessage(v: unknown): JsonRpcMessage | null {
+  if (!isObject(v) || v.jsonrpc !== "2.0") return null;
+  const id = typeof v.id === "number" || typeof v.id === "string" ? v.id : undefined;
+  const e = isObject(v.error) ? { code: num(v.error.code) ?? 0, message: str(v.error.message) ?? "MCP 错误", data: v.error.data } : undefined;
+  return { jsonrpc: "2.0", id, method: str(v.method), params: v.params, result: v.result, error: e };
 }
 
 /* ------------------------------- transports ------------------------------- */
@@ -181,23 +205,21 @@ export class StdioTransport implements McpTransport {
       let started = false;
       const proc = (this.proc = this.spawn(this.command, this.args, { env: this.env, cwd: this.cwd, stdio: ["pipe", "pipe", "pipe"] }));
       let buf = "";
-      proc.stdout!.setEncoding("utf8");
-      proc.stdout!.on("data", (chunk: string) => {
+      proc.stdout.setEncoding("utf8");
+      proc.stdout.on("data", (chunk: string) => {
         buf += chunk;
         let i: number;
         while ((i = buf.indexOf("\n")) >= 0) {
           const line = buf.slice(0, i).trim();
           buf = buf.slice(i + 1);
           if (!line) continue;
-          try {
-            onMessage(JSON.parse(line));
-          } catch {
-            /* non-JSON output (some servers log to stdout): ignore */
-          }
+          // Non-JSON output (some servers log to stdout) is ignored.
+          const msg = toRpcMessage(parseJson(line));
+          if (msg) onMessage(msg);
         }
       });
-      proc.stderr!.setEncoding("utf8");
-      proc.stderr!.on("data", (c: string) => {
+      proc.stderr.setEncoding("utf8");
+      proc.stderr.on("data", (c: string) => {
         this.stderr = (this.stderr + c).slice(-4000);
       });
       proc.on("error", (e) => {
@@ -280,13 +302,10 @@ export class HttpMcpTransport implements McpTransport {
         for await (const chunk of res.body) {
           let done = false;
           for (const ev of parser.push(chunk)) {
-            try {
-              const msg = JSON.parse(ev.data) as JsonRpcMessage;
-              this.onMessage(msg);
-              if (msg.id !== undefined && msg.id === m.id && !msg.method) done = true;
-            } catch {
-              /* ignore */
-            }
+            const msg = toRpcMessage(parseJson(ev.data));
+            if (!msg) continue;
+            this.onMessage(msg);
+            if (msg.id !== undefined && msg.id === m.id && !msg.method) done = true;
           }
           if (done) {
             ctrl.abort();
@@ -296,8 +315,11 @@ export class HttpMcpTransport implements McpTransport {
       } else {
         const text = await res.text();
         if (!text.trim()) return;
-        const parsed = JSON.parse(text);
-        for (const msg of Array.isArray(parsed) ? parsed : [parsed]) this.onMessage(msg);
+        const parsed = parseJson(text);
+        for (const raw of Array.isArray(parsed) ? (parsed as unknown[]) : [parsed]) {
+          const msg = toRpcMessage(raw);
+          if (msg) this.onMessage(msg);
+        }
       }
     } catch (e) {
       if (ctrl.signal.aborted && m.id !== undefined) return; // we aborted after the reply

@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     include: ["tests/live/**/*.live.test.ts"],
     environment: "node",
+    setupFiles: ["tests/setup.ts"],
     testTimeout: 180_000,
   },
 });

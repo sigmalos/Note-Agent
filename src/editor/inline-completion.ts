@@ -33,11 +33,7 @@ class GhostWidget extends WidgetType {
     return other.text === this.text;
   }
   toDOM(): HTMLElement {
-    const span = document.createElement("span");
-    span.className = "ai-agent-ghost";
-    span.textContent = this.text;
-    span.setAttribute("aria-hidden", "true");
-    return span;
+    return createSpan({ cls: "ai-agent-ghost", text: this.text, attr: { "aria-hidden": "true" } });
   }
   ignoreEvent(): boolean {
     return true;

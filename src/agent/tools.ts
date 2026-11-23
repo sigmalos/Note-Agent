@@ -1,6 +1,7 @@
 import { appendText, findTarget } from "../chat/note-edits";
 import { normalizeVaultPath, parentFolder, resolveNotePath } from "./paths";
 import { searchNotes, stripFrontmatter, type SearchDoc } from "./search";
+import { arr, num, obj, str as optStr, text } from "../utils/json";
 import { ToolError, type AgentTool, type FileChange, type ToolContext, type ToolResult } from "./types";
 
 /**
@@ -42,7 +43,7 @@ async function searchDocs(ctx: ToolContext): Promise<SearchDoc[]> {
   return Promise.all(notes.map(async (info) => ({ info, content: await ctx.port.read(info.path).catch(() => "") })));
 }
 
-export const TOOLS: AgentTool<any>[] = [
+export const TOOLS: AgentTool[] = [
   {
     name: "get_current_file",
     label: "读取当前笔记",
@@ -80,9 +81,14 @@ export const TOOLS: AgentTool<any>[] = [
       },
       required: ["query"],
     },
-    describe: (i) => [i.query && `“${i.query}”`, i.folder && `📁 ${i.folder}`, i.tag && `#${String(i.tag).replace(/^#/, "")}`].filter(Boolean).join(" "),
+    describe: (i) => {
+      const query = text(i.query);
+      const folder = text(i.folder);
+      const tag = text(i.tag);
+      return [query && `“${query}”`, folder && `📁 ${folder}`, tag && `#${tag.replace(/^#/, "")}`].filter(Boolean).join(" ");
+    },
     async run(input, ctx) {
-      const hits = searchNotes(await searchDocs(ctx), String(input.query ?? ""), { folder: input.folder, tag: input.tag, limit: input.limit ?? 10 });
+      const hits = searchNotes(await searchDocs(ctx), text(input.query), { folder: optStr(input.folder), tag: optStr(input.tag), limit: num(input.limit) ?? 10 });
       if (!hits.length) return ok({ results: [], note: "没有匹配的笔记，可以换个关键词或减少关键词。" }, "没有找到匹配的笔记");
       return ok(
         { results: hits.map((h) => ({ path: h.path, snippet: h.snippet, tags: h.tags.length ? h.tags : undefined, matched: h.matched.join("、") })) },
@@ -107,10 +113,10 @@ export const TOOLS: AgentTool<any>[] = [
       },
       required: ["query"],
     },
-    describe: (i) => `“${i.query ?? ""}”${i.folder ? ` 📁 ${i.folder}` : ""}`,
+    describe: (i) => `“${text(i.query)}”${i.folder ? ` 📁 ${text(i.folder)}` : ""}`,
     async run(input, ctx) {
       if (!ctx.semantic) return { ok: false, output: "语义检索未启用，请改用 search_vault。", summary: "语义检索未启用" };
-      const hits = await ctx.semantic(String(input.query), { folder: input.folder, topK: input.top_k, signal: ctx.signal });
+      const hits = await ctx.semantic(text(input.query), { folder: optStr(input.folder), topK: num(input.top_k), signal: ctx.signal });
       if (!hits.length) return ok({ results: [], note: "没有足够相似的片段，可以换种说法或改用 search_vault。" }, "没有找到相似内容");
       const paths = [...new Set(hits.map((h) => h.path))];
       return ok(
@@ -134,11 +140,11 @@ export const TOOLS: AgentTool<any>[] = [
       },
       required: ["path"],
     },
-    describe: (i) => String(i.path ?? ""),
+    describe: (i) => text(i.path),
     async run(input, ctx) {
       const path = existingNote(ctx, input.path);
       const all = await ctx.port.read(path);
-      const offset = Math.min(input.offset ?? 0, all.length);
+      const offset = Math.min(num(input.offset) ?? 0, all.length);
       const c = clip(all.slice(offset), ctx.maxReadChars);
       const next = c.truncated ? offset + c.text.length : undefined;
       return ok(
@@ -155,7 +161,7 @@ export const TOOLS: AgentTool<any>[] = [
     permission: "read",
     description: "列出某个文件夹下的笔记和子文件夹（不递归）。folder 为空表示仓库根目录。",
     parameters: { type: "object", properties: { folder: str("文件夹路径，留空表示根目录。") } },
-    describe: (i) => (i.folder ? `📁 ${i.folder}` : "根目录"),
+    describe: (i) => (i.folder ? `📁 ${text(i.folder)}` : "根目录"),
     async run(input, ctx) {
       const folder = input.folder ? normalizeVaultPath(input.folder) : "";
       const list = ctx.port.listFolder(folder);
@@ -172,7 +178,7 @@ export const TOOLS: AgentTool<any>[] = [
     permission: "read",
     description: "获取链接到指定笔记的其他笔记（反向链接）。",
     parameters: { type: "object", properties: { path: str("笔记路径或笔记名。") }, required: ["path"] },
-    describe: (i) => String(i.path ?? ""),
+    describe: (i) => text(i.path),
     async run(input, ctx) {
       const path = existingNote(ctx, input.path);
       const links = ctx.port.backlinks(path).filter((p) => !ctx.port.isExcluded(p));
@@ -186,7 +192,7 @@ export const TOOLS: AgentTool<any>[] = [
     permission: "read",
     description: "获取指定笔记中链接到的其他笔记（出链），以及尚未创建的链接目标。",
     parameters: { type: "object", properties: { path: str("笔记路径或笔记名。") }, required: ["path"] },
-    describe: (i) => String(i.path ?? ""),
+    describe: (i) => text(i.path),
     async run(input, ctx) {
       const path = existingNote(ctx, input.path);
       const { resolved, unresolved } = ctx.port.outgoingLinks(path);
@@ -205,9 +211,9 @@ export const TOOLS: AgentTool<any>[] = [
       properties: { path: str("新笔记的路径，例如 \"AI/Agent 综述.md\"。"), content: str("笔记的完整 Markdown 内容。") },
       required: ["path", "content"],
     },
-    describe: (i) => String(i.path ?? ""),
+    describe: (i) => text(i.path),
     async plan(input, ctx): Promise<FileChange> {
-      return { kind: "create", path: newNotePath(ctx, input.path), after: String(input.content ?? "") };
+      return { kind: "create", path: newNotePath(ctx, input.path), after: text(input.content) };
     },
   },
   {
@@ -234,12 +240,15 @@ export const TOOLS: AgentTool<any>[] = [
       },
       required: ["path", "edits"],
     },
-    describe: (i) => `${i.path ?? ""}${Array.isArray(i.edits) && i.edits.length > 1 ? ` · ${i.edits.length} 处` : ""}`,
+    describe: (i) => {
+      const n = arr(i.edits).length;
+      return `${text(i.path)}${n > 1 ? ` · ${n} 处` : ""}`;
+    },
     async plan(input, ctx): Promise<FileChange> {
       const path = existingNote(ctx, input.path);
       const before = await ctx.port.read(path);
       let after = before;
-      (input.edits as Array<{ search: string; replace: string }>).forEach((e, i) => {
+      arr(input.edits).map((raw) => ({ search: text(obj(raw).search), replace: text(obj(raw).replace) })).forEach((e, i) => {
         if (!e.search.trim()) throw new ToolError(`第 ${i + 1} 处修改的 search 为空；追加内容请使用 append_file。`);
         const m = findTarget(after, e.search);
         if (!m.ok) throw new ToolError(`第 ${i + 1} 处修改：${m.reason}`);
@@ -260,12 +269,13 @@ export const TOOLS: AgentTool<any>[] = [
       properties: { path: str("笔记路径。"), content: str("要追加的 Markdown 内容。") },
       required: ["path", "content"],
     },
-    describe: (i) => String(i.path ?? ""),
+    describe: (i) => text(i.path),
     async plan(input, ctx): Promise<FileChange> {
       const path = existingNote(ctx, input.path);
       const before = await ctx.port.read(path);
-      if (!String(input.content ?? "").trim()) throw new ToolError("追加的内容为空。");
-      return { kind: "modify", path, before, after: before + appendText(before, String(input.content)) };
+      const content = text(input.content);
+      if (!content.trim()) throw new ToolError("追加的内容为空。");
+      return { kind: "modify", path, before, after: before + appendText(before, content) };
     },
   },
   {
@@ -279,7 +289,7 @@ export const TOOLS: AgentTool<any>[] = [
       properties: { path: str("当前路径。"), new_path: str("新路径（含文件名），例如 \"Archive/Old.md\"。") },
       required: ["path", "new_path"],
     },
-    describe: (i) => `${i.path ?? ""} → ${i.new_path ?? ""}`,
+    describe: (i) => `${text(i.path)} → ${text(i.new_path)}`,
     async plan(input, ctx): Promise<FileChange> {
       const from = existingNote(ctx, input.path);
       const to = newNotePath(ctx, input.new_path);
@@ -294,7 +304,7 @@ export const TOOLS: AgentTool<any>[] = [
     permission: "delete",
     description: "把笔记移到回收站（可恢复）。只有在用户明确要求删除时才使用。",
     parameters: { type: "object", properties: { path: str("笔记路径。") }, required: ["path"] },
-    describe: (i) => String(i.path ?? ""),
+    describe: (i) => text(i.path),
     async plan(input, ctx): Promise<FileChange> {
       const path = existingNote(ctx, input.path);
       return { kind: "delete", path, before: await ctx.port.read(path) };
@@ -303,7 +313,7 @@ export const TOOLS: AgentTool<any>[] = [
 ];
 
 /** Pseudo-tool the model uses to publish / update its plan (SRS §4.6.5 查看执行计划). */
-export const PLAN_TOOL: AgentTool<{ steps: Array<{ title: string; status?: string }> }> = {
+export const PLAN_TOOL: AgentTool = {
   name: "update_plan",
   label: "执行计划",
   icon: "list-checks",
@@ -326,15 +336,15 @@ export const PLAN_TOOL: AgentTool<{ steps: Array<{ title: string; status?: strin
     },
     required: ["steps"],
   },
-  describe: (i) => `${i.steps?.length ?? 0} 步`,
+  describe: (i) => `${arr(i.steps).length} 步`,
 };
 
-export function toolByName(name: string): AgentTool<any> | undefined {
+export function toolByName(name: string): AgentTool | undefined {
   return name === PLAN_TOOL.name ? PLAN_TOOL : TOOLS.find((t) => t.name === name);
 }
 
 /** Tools offered to the model in a mode: Ask mode gets read tools only. */
-export function toolsForMode(mode: "ask" | "accept" | "auto", opts: { semantic?: boolean } = {}): AgentTool<any>[] {
+export function toolsForMode(mode: "ask" | "accept" | "auto", opts: { semantic?: boolean } = {}): AgentTool[] {
   let tools = mode === "ask" ? TOOLS.filter((t) => t.permission === "read") : TOOLS;
   if (!opts.semantic) tools = tools.filter((t) => t.name !== "semantic_search");
   return [PLAN_TOOL, ...tools];

@@ -45,10 +45,10 @@ function one(render: (parent: HTMLElement) => void): HTMLElement {
 
 /** Rebuild a node's content in place, keeping the node (and a <details>' open state). */
 function refill(el: HTMLElement, fresh: HTMLElement): void {
-  const wasOpen = el instanceof HTMLDetailsElement && el.open;
+  const wasOpen = el.instanceOf(HTMLDetailsElement) && el.open;
   el.className = fresh.className;
   el.replaceChildren(...Array.from(fresh.childNodes));
-  if (el instanceof HTMLDetailsElement && fresh instanceof HTMLDetailsElement) el.open = wasOpen || fresh.open;
+  if (el.instanceOf(HTMLDetailsElement) && fresh.instanceOf(HTMLDetailsElement)) el.open = wasOpen || fresh.open;
 }
 
 /**
@@ -143,7 +143,7 @@ function toolTitle(step: ToolStep): { label: string; detail: string; icon: strin
   const tool = toolByName(step.name);
   let detail = "";
   try {
-    detail = tool?.describe(step.args as never) ?? "";
+    detail = tool?.describe(step.args) ?? "";
   } catch {
     /* malformed args */
   }

@@ -43,7 +43,7 @@ export function parsePrompt(path: string, frontmatter: Record<string, unknown> |
   const text = body.trim();
   if (!text) return null;
   const fm = frontmatter ?? {};
-  const str = (k: string) => (typeof fm[k] === "string" ? (fm[k] as string).trim() : typeof fm[k] === "number" ? String(fm[k]) : "");
+  const str = (k: string) => (typeof fm[k] === "string" ? (fm[k]).trim() : typeof fm[k] === "number" ? String(fm[k]) : "");
   const base = path.split("/").pop()!.replace(/\.md$/i, "");
   const scopeRaw = str("scope").toLowerCase();
   const scope: PromptScope = (["chat", "edit", "both", "system"] as const).find((x) => x === scopeRaw) ?? "both";

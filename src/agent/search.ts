@@ -90,13 +90,17 @@ export function scoreDoc(doc: SearchDoc, terms: string[]): { score: number; matc
   const matched = new Set<string>();
   for (const t of terms) {
     let s = 0;
-    if (name === t) (s += 20), matched.add("文件名");
-    else if (name.includes(t)) (s += 10), matched.add("文件名");
-    else if (path.includes(t)) (s += 4), matched.add("路径");
-    if (headings.some((h) => h.includes(t))) (s += 5), matched.add("标题");
-    if (tags.some((x) => x === t || x.startsWith(`${t}/`))) (s += 8), matched.add("标签");
-    else if (tags.some((x) => x.includes(t))) (s += 4), matched.add("标签");
-    if (fm.includes(t)) (s += 3), matched.add("属性");
+    const hit = (points: number, field: string) => {
+      s += points;
+      matched.add(field);
+    };
+    if (name === t) hit(20, "文件名");
+    else if (name.includes(t)) hit(10, "文件名");
+    else if (path.includes(t)) hit(4, "路径");
+    if (headings.some((h) => h.includes(t))) hit(5, "标题");
+    if (tags.some((x) => x === t || x.startsWith(`${t}/`))) hit(8, "标签");
+    else if (tags.some((x) => x.includes(t))) hit(4, "标签");
+    if (fm.includes(t)) hit(3, "属性");
     const n = countOccurrences(body, t, 20);
     if (n) {
       s += Math.min(10, 1 + Math.log2(n) * 2);

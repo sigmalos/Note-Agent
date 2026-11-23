@@ -2,9 +2,9 @@
  * Lightweight token estimation (SRS §4.3.4). Exact tokenizers differ per model; this
  * deliberately over-estimates a little so budgets stay safe:
  *   - CJK characters ≈ 1 token each
- *   - other text ≈ 1 token per 4 characters
+ *   - other text ~ 1 token per 4 characters
  */
-const CJK = /[぀-ヿ㐀-䶿一-鿿가-힯豈-﫿＀-￯　-〿]/g;
+const CJK = /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF\uFF00-\uFFEF\u3000-\u303F]/gu;
 
 export function estimateTokens(text: string): number {
   if (!text) return 0;

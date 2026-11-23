@@ -31,8 +31,10 @@ export class Logger {
         return a;
       }
     });
-    // eslint-disable-next-line no-console
-    console[level](this.prefix, ...safe);
+    // Obsidian's guidelines: keep the console quiet. Info is diagnostic and only shown with debug logging on.
+    if (level === "error") console.error(this.prefix, ...safe);
+    else if (level === "warn") console.warn(this.prefix, ...safe);
+    else if (level === "debug" || this.debugEnabled) console.debug(this.prefix, ...safe);
   }
 }
 

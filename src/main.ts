@@ -7,7 +7,7 @@ import { PLUGIN_ID, VIEW_TYPE_CHAT } from "./constants";
 import { ObsidianContext } from "./context/obsidian-context";
 import { createFetchTransport, createNodeTransport, type HttpTransport } from "./core/http";
 import { LLMRouter } from "./core/llm-router";
-import { EDIT_ACTIONS, type EditAction } from "./core/prompt-manager";
+import { EDIT_ACTIONS } from "./core/prompt-manager";
 import { CompletionService } from "./editor/completion-service";
 import { PromptService } from "./prompts/prompt-service";
 import { RagService } from "./rag/rag-service";
@@ -125,14 +125,12 @@ export default class AIAgentPlugin extends Plugin {
   /** Node transport on desktop (no CORS, streams); fetch on mobile or when forced. */
   getTransport(): HttpTransport {
     const mode = this.settings.transport;
-    const useNode = mode === "node" || (mode === "auto" && Platform.isDesktopApp);
-    if (useNode) {
+    // Node's http(s) only exist in the desktop app; mobile always uses fetch.
+    if (Platform.isDesktopApp && (mode === "node" || mode === "auto")) {
       try {
         return (this.transports.node ??= createNodeTransport({
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          http: require("http"),
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          https: require("https"),
+          http: require("http") as typeof import("node:http"),
+          https: require("https") as typeof import("node:https"),
         }));
       } catch (e) {
         logger.warn("Node transport unavailable, falling back to fetch", e);
@@ -266,7 +264,7 @@ export default class AIAgentPlugin extends Plugin {
           .setIcon("wand")
           .onClick(() => this.edits.promptAndRun(editor, view)),
       );
-      for (const a of actions) add((item) => item.setTitle(a.label).setIcon(a.icon).onClick(() => this.edits.run(a as EditAction, editor, view)));
+      for (const a of actions) add((item) => item.setTitle(a.label).setIcon(a.icon).onClick(() => this.edits.run(a, editor, view)));
     };
 
     menu.addItem((item) => {

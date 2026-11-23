@@ -1,4 +1,5 @@
 import { App, Modal, setIcon } from "obsidian";
+import { runAsync } from "../utils/async";
 import type { SessionStore } from "../chat/session-manager";
 import type { SessionSummary } from "../chat/types";
 import { confirmDialog } from "./components/confirm-modal";
@@ -14,7 +15,7 @@ export class SessionListModal extends Modal {
     private readonly store: SessionStore,
     private readonly currentId: string,
     private readonly handlers: {
-      open: (id: string) => void;
+      open: (id: string) => void | Promise<void>;
       rename: (id: string, title: string) => Promise<void>;
       deleted: (id: string) => void;
     },
@@ -52,17 +53,17 @@ export class SessionListModal extends Modal {
         text: `${new Date(s.updatedAt).toLocaleString("zh-CN")} · ${s.messageCount} 条消息${s.id === this.currentId ? " · 当前" : ""}`,
       });
       main.addEventListener("click", () => {
-        this.handlers.open(s.id);
+        runAsync(this.handlers.open(s.id));
         this.close();
       });
 
       const actions = row.createDiv({ cls: "ai-agent-session-actions" });
-      const btn = (icon: string, label: string, fn: () => void) => {
+      const btn = (icon: string, label: string, fn: () => void | Promise<void>) => {
         const b = actions.createEl("button", { cls: "clickable-icon", attr: { "aria-label": label } });
         setIcon(b, icon);
         b.addEventListener("click", (e) => {
           e.stopPropagation();
-          fn();
+          runAsync(fn());
         });
       };
       btn("pencil", "重命名", async () => {

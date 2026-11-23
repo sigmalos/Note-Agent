@@ -15,14 +15,14 @@ export function promptText(app: App, opts: { title: string; value?: string; plac
         this.setTitle(opts.title);
         new Setting(this.contentEl).addText((t) => {
           t.setPlaceholder(opts.placeholder ?? "").setValue(value).onChange((v) => (value = v));
-          t.inputEl.style.width = "100%";
+          t.inputEl.addClass("ai-agent-input-full");
           t.inputEl.addEventListener("keydown", (e) => {
             if (e.key === "Enter" && !e.isComposing) {
               e.preventDefault();
               finish(value.trim() || null, this);
             }
           });
-          setTimeout(() => {
+          window.setTimeout(() => {
             t.inputEl.focus();
             t.inputEl.select();
           }, 0);

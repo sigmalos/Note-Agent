@@ -46,9 +46,10 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 0 !important;
   overflow: hidden;
 }
+/* more specific than Obsidian's view padding */
+.workspace-leaf-content > .view-content.ai-agent-chat { padding: 0; }
 .ai-agent-chat-header {
   display: flex;
   align-items: center;
@@ -239,8 +240,9 @@
 .ai-agent-resizer:hover::after,
 .ai-agent-resizer:focus-visible::after,
 .ai-agent-resizer.is-dragging::after { opacity: 1; transform: scaleX(1); }
-.ai-agent-chat.is-resizing,
-.ai-agent-chat.is-resizing * { cursor: row-resize !important; user-select: none !important; }
+/* repeated class: outranks the buttons' own cursors while dragging */
+.ai-agent-chat.is-resizing.is-resizing,
+.ai-agent-chat.is-resizing.is-resizing.is-resizing * { cursor: row-resize; user-select: none; }
 
 /* bottom panel: context chips + composer box */
 .ai-agent-bottom {
@@ -507,7 +509,6 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 .ai-agent-diff-del {
   background: rgba(var(--color-red-rgb), 0.18);
   text-decoration: line-through;
-  text-decoration-color: rgba(var(--color-red-rgb), 0.7);
   border-radius: 2px;
 }
 .ai-agent-diff-context { color: var(--text-faint); }
@@ -654,15 +655,6 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 }
 .ai-agent-session-row.is-removing { animation: ai-agent-leave 180ms ease-in both; animation-delay: 0ms; }
 
-@media (prefers-reduced-motion: reduce) {
-  :is(.ai-agent-chat, .ai-agent-diff-modal, .ai-agent-edit-prompt, .ai-agent-session-modal, .ai-agent-provider-modal, .ai-agent-settings),
-  :is(.ai-agent-chat, .ai-agent-diff-modal, .ai-agent-edit-prompt, .ai-agent-session-modal, .ai-agent-provider-modal, .ai-agent-settings) * {
-    animation-duration: 1ms !important;
-    animation-iteration-count: 1 !important;
-    animation-delay: 0ms !important;
-    transition-duration: 1ms !important;
-  }
-}
 
 /* ==========================================================================
    Popover — upward list anchored to a composer button. One style for every list:
@@ -927,7 +919,7 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 .ai-agent-plan-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .ai-agent-plan-list li { display: flex; align-items: flex-start; gap: 6px; color: var(--text-muted); }
 .ai-agent-plan-list li .ai-agent-plan-mark { margin-top: 2px; color: var(--text-faint); }
-.ai-agent-plan-list li.is-done { color: var(--text-faint); text-decoration: line-through; text-decoration-color: var(--background-modifier-border); }
+.ai-agent-plan-list li.is-done { color: var(--text-faint); text-decoration: line-through; }
 .ai-agent-plan-list li.is-done .ai-agent-plan-mark { color: var(--color-green); }
 .ai-agent-plan-list li.is-in_progress { color: var(--text-normal); }
 .ai-agent-plan-list li.is-in_progress .ai-agent-plan-mark { color: var(--interactive-accent); }
@@ -1019,6 +1011,8 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 .ai-agent-changed-head button { margin-left: auto; height: 24px; padding: 0 10px; font-size: var(--font-ui-smaller); }
 .ai-agent-edit-card-diff.is-create { border-left: 3px solid rgba(var(--color-green-rgb), 0.6); }
 
+.ai-agent-input-full { width: 100%; }
+
 /* inline completion */
 .ai-agent-ghost { color: var(--text-faint); opacity: 0.85; white-space: pre-wrap; pointer-events: none; }
 .ai-agent-completion-status { display: inline-flex; align-items: center; gap: 4px; }
@@ -1028,3 +1022,18 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 .ai-agent-completion-icon svg { width: 12px; height: 12px; }
 .ai-agent-completion-status.is-loading .ai-agent-completion-icon svg { animation: ai-agent-spin 900ms linear infinite; }
 .ai-agent-edit-section { margin: var(--size-4-3) 0 var(--size-2-2); font-size: var(--font-ui-smaller); font-weight: var(--font-semibold); color: var(--text-faint); }
+
+/* Reduced motion. Last in the file and with a repeated :is() (specificity 0,4,0) so it outranks the
+   component animation rules above; the streaming cursor (a pseudo-element) is stopped separately. */
+@media (prefers-reduced-motion: reduce) {
+  :is(.ai-agent-chat, .ai-agent-diff-modal, .ai-agent-edit-prompt, .ai-agent-session-modal, .ai-agent-provider-modal, .ai-agent-settings):is(.ai-agent-chat, .ai-agent-diff-modal, .ai-agent-edit-prompt, .ai-agent-session-modal, .ai-agent-provider-modal, .ai-agent-settings):is(.ai-agent-chat, .ai-agent-diff-modal, .ai-agent-edit-prompt, .ai-agent-session-modal, .ai-agent-provider-modal, .ai-agent-settings):is(.ai-agent-chat, .ai-agent-diff-modal, .ai-agent-edit-prompt, .ai-agent-session-modal, .ai-agent-provider-modal, .ai-agent-settings),
+  :is(.ai-agent-chat, .ai-agent-diff-modal, .ai-agent-edit-prompt, .ai-agent-session-modal, .ai-agent-provider-modal, .ai-agent-settings):is(.ai-agent-chat, .ai-agent-diff-modal, .ai-agent-edit-prompt, .ai-agent-session-modal, .ai-agent-provider-modal, .ai-agent-settings):is(.ai-agent-chat, .ai-agent-diff-modal, .ai-agent-edit-prompt, .ai-agent-session-modal, .ai-agent-provider-modal, .ai-agent-settings):is(.ai-agent-chat, .ai-agent-diff-modal, .ai-agent-edit-prompt, .ai-agent-session-modal, .ai-agent-provider-modal, .ai-agent-settings) * {
+    animation-duration: 1ms;
+    animation-iteration-count: 1;
+    animation-delay: 0ms;
+    transition-duration: 1ms;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-agent-msg.is-streaming .ai-agent-msg-body > .ai-agent-msg-markdown:last-child > :last-child::after { animation: none; }
+}

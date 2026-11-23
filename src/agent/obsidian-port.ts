@@ -102,7 +102,10 @@ export class ObsidianVaultPort implements VaultPort {
       while (start < before.length && start < after.length && before[start] === after[start]) start++;
       let endB = before.length;
       let endA = after.length;
-      while (endB > start && endA > start && before[endB - 1] === after[endA - 1]) endB--, endA--;
+      while (endB > start && endA > start && before[endB - 1] === after[endA - 1]) {
+        endB--;
+        endA--;
+      }
       editor.replaceRange(after.slice(start, endA), editor.offsetToPos(start), editor.offsetToPos(endB));
       return;
     }

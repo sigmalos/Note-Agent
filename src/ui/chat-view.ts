@@ -27,6 +27,7 @@ import type { ProviderConfig } from "../providers/base/provider.types";
 import { rememberModel } from "../settings/settings";
 import { chatText, type CustomPrompt } from "../prompts/custom-prompts";
 import { hostOf } from "../utils/url";
+import { runAsync } from "../utils/async";
 
 /** A composer button that opens an upward list. */
 interface Picker {
@@ -201,7 +202,7 @@ export class ChatView extends ItemView {
     // Header
     const header = (this.headerEl = root.createDiv({ cls: "ai-agent-chat-header" }));
     this.titleEl = header.createDiv({ cls: "ai-agent-chat-title", attr: { "aria-label": "点击重命名会话" } });
-    this.titleEl.addEventListener("click", () => this.renameSession());
+    this.titleEl.addEventListener("click", () => runAsync(this.renameSession()));
     const actions = header.createDiv({ cls: "ai-agent-chat-actions" });
     this.iconButton(actions, "plus", "新建会话", (e) => {
       flash(e.currentTarget as HTMLElement, "is-rotating");
@@ -374,10 +375,10 @@ export class ChatView extends ItemView {
     this.app.saveLocalStorage(BOTTOM_HEIGHT_KEY, this.bottomHeight);
   }
 
-  private iconButton(parent: HTMLElement, icon: string, label: string, onClick: (evt: MouseEvent) => void): HTMLElement {
+  private iconButton(parent: HTMLElement, icon: string, label: string, onClick: (evt: MouseEvent) => void | Promise<void>): HTMLElement {
     const b = parent.createEl("button", { cls: "clickable-icon", attr: { "aria-label": label, "data-icon": icon } });
     setIcon(b, icon);
-    b.addEventListener("click", onClick);
+    b.addEventListener("click", (e) => runAsync(onClick(e)));
     return b;
   }
 
@@ -917,11 +918,14 @@ export class ChatView extends ItemView {
       chip.setAttr("aria-label", `${path}\n点击 × 移除`);
       const x = chip.createSpan({ cls: "ai-agent-chip-remove", attr: { "aria-label": "移除" } });
       setIcon(x, "x");
-      x.addEventListener("click", async (e) => {
+      x.addEventListener("click", (e) => {
         e.stopPropagation();
-        await animateOut(chip, "is-removing", 180);
-        this.attachedPaths = this.attachedPaths.filter((p) => p !== path);
-        this.refreshContextBar(true);
+        runAsync(
+          animateOut(chip, "is-removing", 180).then(() => {
+            this.attachedPaths = this.attachedPaths.filter((p) => p !== path);
+            this.refreshContextBar(true);
+          }),
+        );
       });
     }
     this.chipKeys = seen;

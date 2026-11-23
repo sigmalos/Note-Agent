@@ -1,0 +1,56 @@
+# Builds the plugin from a version tag, publishes the GitHub release that Obsidian installs
+# from, and attests the release assets so users can verify they were built from this repo:
+#   gh attestation verify main.js --repo sigmalos/Note-Agent
+name: Release
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write # create the release
+  id-token: write # sign the attestations
+  attestations: write # store the attestations
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Tag must match manifest.json and versions.json
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          manifest=$(node -p "require('./manifest.json').version")
+          listed=$(node -p "require('./versions.json')['${tag}'] ?? ''")
+          if [ "$tag" != "$manifest" ]; then echo "::error::tag $tag != manifest.json version $manifest"; exit 1; fi
+          if [ -z "$listed" ]; then echo "::error::versions.json has no entry for $tag"; exit 1; fi
+
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+      - name: Attest release assets
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          notes=".github/release-notes/${tag}.md"
+          if [ -f "$notes" ]; then set -- --notes-file "$notes"; else set -- --generate-notes; fi
+          gh release create "$tag" main.js manifest.json styles.css --title "$tag" --verify-tag "$@"

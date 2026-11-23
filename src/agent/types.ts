@@ -76,7 +76,10 @@ export interface ToolContext {
   signal?: AbortSignal;
 }
 
-export interface AgentTool<I = Record<string, unknown>> {
+/** Tool input after JSON-schema validation; tools read fields with the json.ts helpers. */
+export type ToolInput = Record<string, unknown>;
+
+export interface AgentTool<I = ToolInput> {
   name: string;
   /** User-facing name, e.g. "搜索笔记". */
   label: string;

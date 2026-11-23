@@ -3,19 +3,36 @@
  * Supports what our tool schemas use: object/properties/required, string/number/integer/
  * boolean/array/items, enum, minLength/maxLength, minimum/maximum, maxItems.
  */
-type Schema = Record<string, any>;
+/** The subset of JSON Schema our tool definitions use. */
+interface Schema {
+  type?: string;
+  properties?: Record<string, Schema>;
+  required?: string[];
+  items?: Schema;
+  enum?: unknown[];
+  minLength?: number;
+  maxLength?: number;
+  minimum?: number;
+  maximum?: number;
+  minItems?: number;
+  maxItems?: number;
+}
 
-export function validateInput(schema: Schema, value: unknown, path = "参数"): string[] {
+export function validateInput(schemaIn: Record<string, unknown>, value: unknown, path = "参数"): string[] {
+  return check(schemaIn, value, path);
+}
+
+function check(schema: Schema, value: unknown, path: string): string[] {
   const errors: string[] = [];
   const type = schema.type;
   if (type === "object") {
     if (!value || typeof value !== "object" || Array.isArray(value)) return [`${path} 必须是对象`];
-    const obj = value as Record<string, unknown>;
+    const record = value as Record<string, unknown>;
     for (const key of schema.required ?? []) {
-      if (obj[key] === undefined || obj[key] === null) errors.push(`缺少必填参数 ${key}`);
+      if (record[key] === undefined || record[key] === null) errors.push(`缺少必填参数 ${key}`);
     }
-    for (const [key, sub] of Object.entries<Schema>(schema.properties ?? {})) {
-      if (obj[key] !== undefined && obj[key] !== null) errors.push(...validateInput(sub, obj[key], key));
+    for (const [key, sub] of Object.entries(schema.properties ?? {})) {
+      if (record[key] !== undefined && record[key] !== null) errors.push(...check(sub, record[key], key));
     }
     return errors;
   }
@@ -31,11 +48,13 @@ export function validateInput(schema: Schema, value: unknown, path = "参数"): 
     if (typeof value !== "boolean") return [`${path} 必须是布尔值`];
   } else if (type === "array") {
     if (!Array.isArray(value)) return [`${path} 必须是数组`];
-    if (schema.maxItems !== undefined && value.length > schema.maxItems) errors.push(`${path} 最多 ${schema.maxItems} 项`);
-    if (schema.minItems !== undefined && value.length < schema.minItems) errors.push(`${path} 至少 ${schema.minItems} 项`);
-    if (schema.items) value.forEach((v, i) => errors.push(...validateInput(schema.items, v, `${path}[${i}]`)));
+    const items = value as unknown[];
+    if (schema.maxItems !== undefined && items.length > schema.maxItems) errors.push(`${path} 最多 ${schema.maxItems} 项`);
+    if (schema.minItems !== undefined && items.length < schema.minItems) errors.push(`${path} 至少 ${schema.minItems} 项`);
+    const itemSchema = schema.items;
+    if (itemSchema) items.forEach((v, i) => errors.push(...check(itemSchema, v, `${path}[${i}]`)));
   }
-  if (schema.enum && !schema.enum.includes(value)) errors.push(`${path} 必须是 ${schema.enum.join(" / ")} 之一`);
+  if (schema.enum && !schema.enum.includes(value)) errors.push(`${path} 必须是 ${schema.enum.map((x) => String(x)).join(" / ")} 之一`);
   return errors;
 }
 
@@ -44,7 +63,7 @@ export function parseArguments(text: string): { ok: true; value: Record<string, 
   const raw = (text ?? "").trim().replace(/^```(?:json)?\s*|\s*```$/g, "");
   if (!raw) return { ok: true, value: {} };
   try {
-    const v = JSON.parse(raw);
+    const v = JSON.parse(raw) as unknown;
     if (!v || typeof v !== "object" || Array.isArray(v)) return { ok: false, error: "参数必须是 JSON 对象" };
     return { ok: true, value: v as Record<string, unknown> };
   } catch {

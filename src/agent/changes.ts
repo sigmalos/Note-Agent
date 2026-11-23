@@ -91,7 +91,10 @@ export function focusDiff(before: string, after: string, contextLines = 2): { be
   while (start < a.length && start < b.length && a[start] === b[start]) start++;
   let endA = a.length - 1;
   let endB = b.length - 1;
-  while (endA >= start && endB >= start && a[endA] === b[endB]) endA--, endB--;
+  while (endA >= start && endB >= start && a[endA] === b[endB]) {
+    endA--;
+    endB--;
+  }
   const from = Math.max(0, start - contextLines);
   const toA = Math.min(a.length, endA + 1 + contextLines);
   const toB = Math.min(b.length, endB + 1 + contextLines);

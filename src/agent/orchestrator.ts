@@ -1,6 +1,7 @@
 import type { ChatMode } from "../chat/types";
 import { LLMError } from "../providers/base/errors";
 import type { LLMMessage, LLMProvider, ReasoningEffort, ToolCall, Usage } from "../providers/base/provider.types";
+import { arr, obj, text } from "../utils/json";
 import { applyChange } from "./changes";
 import { parseArguments, validateInput } from "./schema";
 import { PLAN_TOOL, toolByName, toolsForMode } from "./tools";
@@ -50,7 +51,7 @@ export interface AgentRunOptions {
   /** Semantic (vector) search, when enabled. */
   semantic?: ToolContext["semantic"];
   /** Extra tools (MCP servers). Read tools are offered in every mode, others not in Ask. */
-  extraTools?: AgentTool<any>[];
+  extraTools?: AgentTool[];
   signal: AbortSignal;
   /** Ask the user about a write (Accept mode) or delete. Resolves when they decide. */
   approve: (step: ToolStep) => Promise<Approval>;
@@ -214,7 +215,7 @@ export class AgentRunner {
 
   /* --------------------------------- tools -------------------------------- */
 
-  private lookup(name: string): AgentTool<any> | undefined {
+  private lookup(name: string): AgentTool | undefined {
     return this.o.extraTools?.find((t) => t.name === name) ?? toolByName(name);
   }
 
@@ -222,7 +223,7 @@ export class AgentRunner {
     const tool = this.lookup(call.name);
     let detail = "";
     try {
-      detail = tool?.describe(args as never) ?? "";
+      detail = tool?.describe(args) ?? "";
     } catch {
       /* malformed args */
     }
@@ -261,10 +262,10 @@ export class AgentRunner {
 
     // update_plan: UI-only.
     if (tool.name === PLAN_TOOL.name) {
-      const steps = (args.steps as Array<{ title: string; status?: string }>).map((s) => ({
-        title: String(s.title),
-        status: (s.status === "done" || s.status === "in_progress" ? s.status : "pending") as PlanStep["status"],
-      }));
+      const steps = arr(args.steps).map((raw): PlanStep => {
+        const s = obj(raw);
+        return { title: text(s.title), status: s.status === "done" || s.status === "in_progress" ? s.status : "pending" };
+      });
       turn.plan = steps;
       turn.state = "planning";
       step.status = "done";
@@ -410,7 +411,7 @@ export function agentStatusNote(turn: AgentTurn | undefined): string {
   for (const s of turn.steps) {
     if (s.type !== "tool" || s.name === PLAN_TOOL.name) continue;
     const tool = toolByName(s.name);
-    const what = (s.label ? `${s.label} ${s.detail ?? ""}` : `${tool?.label ?? s.name}${tool ? ` ${tool.describe(s.args as any)}` : ""}`).trim();
+    const what = (s.label ? `${s.label} ${s.detail ?? ""}` : `${tool?.label ?? s.name}${tool ? ` ${tool.describe(s.args)}` : ""}`).trim();
     const status =
       s.status === "done"
         ? s.reverted

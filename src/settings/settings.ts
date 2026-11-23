@@ -103,12 +103,12 @@ export function normalizeProvider(raw: unknown, index: number): ProviderConfig |
   const headers: Record<string, string> = {};
   if (r.customHeaders && typeof r.customHeaders === "object") {
     for (const [k, v] of Object.entries(r.customHeaders as Record<string, unknown>)) {
-      if (k.trim() && v !== undefined && v !== null) headers[k.trim()] = String(v);
+      if (k.trim() && (typeof v === "string" || typeof v === "number" || typeof v === "boolean")) headers[k.trim()] = String(v);
     }
   }
   return {
     id,
-    name: typeof r.name === "string" && r.name.trim() ? r.name.trim() : String(r.model ?? id),
+    name: typeof r.name === "string" && r.name.trim() ? r.name.trim() : typeof r.model === "string" && r.model ? r.model : id,
     presetId: typeof r.presetId === "string" ? r.presetId : "custom",
     protocol: "openai-compatible",
     endpoint: typeof r.endpoint === "string" ? r.endpoint.trim() : "",
@@ -133,7 +133,7 @@ export function normalizeMcpServer(raw: unknown, i: number): McpServerConfig | n
   const r = raw as Record<string, unknown>;
   const strMap = (v: unknown) => {
     const out: Record<string, string> = {};
-    if (v && typeof v === "object") for (const [k, x] of Object.entries(v as Record<string, unknown>)) if (k.trim()) out[k.trim()] = String(x ?? "");
+    if (v && typeof v === "object") for (const [k, x] of Object.entries(v as Record<string, unknown>)) if (k.trim()) out[k.trim()] = typeof x === "string" || typeof x === "number" || typeof x === "boolean" ? String(x) : "";
     return out;
   };
   return {

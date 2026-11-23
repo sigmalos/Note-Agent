@@ -141,7 +141,11 @@ function splitBlocks(text: string): string[] {
   const out: string[] = [];
   let buf = "";
   let inFence = false;
-  for (const line of text.split(/(?<=\n)/)) {
+  // Lines with their trailing newline (no lookbehind: unsupported on iOS < 16.4).
+  const parts = text.split("\n");
+  const lines = parts.map((l, i) => (i < parts.length - 1 ? `${l}\n` : l));
+  if (lines[lines.length - 1] === "") lines.pop();
+  for (const line of lines) {
     if (/^\s*(```|~~~)/.test(line)) inFence = !inFence;
     buf += line;
     if (!inFence && !line.trim()) {

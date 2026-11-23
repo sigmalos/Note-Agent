@@ -2,6 +2,7 @@ import type { HttpResponse, HttpTransport } from "../../core/http";
 import { SSEParser } from "../../core/sse";
 import { ThinkTagSplitter, splitThinkTags } from "../../core/think-filter";
 import { LLMError, errorFromStatus, toLLMError } from "../base/errors";
+import { arr, errorMessage, isObject, num, obj, parseJson, str, text as asText } from "../../utils/json";
 import type {
   ChatChunk,
   ChatRequest,
@@ -127,19 +128,17 @@ export class OpenAICompatibleProvider implements LLMProvider {
     });
     const text = await res.text();
     if (res.status < 200 || res.status >= 300) throw errorFromStatus(res.status, text, "获取模型列表");
-    try {
-      const json = JSON.parse(text);
-      const list: unknown[] = Array.isArray(json?.data) ? json.data : Array.isArray(json?.models) ? json.models : [];
-      return list
-        .map((m) => {
-          const o = m as { id?: string; name?: string; model?: string; owned_by?: string };
-          return { id: String(o.id ?? o.model ?? o.name ?? ""), ownedBy: o.owned_by };
-        })
-        .filter((m) => m.id)
-        .sort((a, b) => a.id.localeCompare(b.id));
-    } catch {
-      throw new LLMError("bad_response", { detail: "模型列表不是合法 JSON", where: "获取模型列表" });
-    }
+    const json = parseJson(text);
+    if (json === undefined) throw new LLMError("bad_response", { detail: "模型列表不是合法 JSON", where: "获取模型列表" });
+    const root = obj(json);
+    const list = Array.isArray(root.data) ? arr(root.data) : arr(root.models);
+    return list
+      .map((m) => {
+        const o = obj(m);
+        return { id: str(o.id) ?? str(o.model) ?? str(o.name) ?? "", ownedBy: str(o.owned_by) };
+      })
+      .filter((m) => m.id)
+      .sort((a, b) => a.id.localeCompare(b.id));
   }
 
   async embed(request: EmbeddingRequest): Promise<EmbeddingResponse> {
@@ -156,22 +155,19 @@ export class OpenAICompatibleProvider implements LLMProvider {
     });
     const text = await res.text();
     if (res.status < 200 || res.status >= 300) throw errorFromStatus(res.status, text, "Embedding");
-    let json: any;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      throw new LLMError("bad_response", { detail: text.slice(0, 200), where: "Embedding" });
-    }
-    const data: any[] = Array.isArray(json?.data) ? json.data : [];
+    const json = parseJson(text);
+    if (json === undefined) throw new LLMError("bad_response", { detail: text.slice(0, 200), where: "Embedding" });
+    const root = obj(json);
+    const data = arr(root.data).map(obj);
     if (data.length !== request.input.length) {
       throw new LLMError("bad_response", { detail: `返回了 ${data.length} 个向量，期望 ${request.input.length} 个`, where: "Embedding" });
     }
     const vectors = data
       .slice()
-      .sort((a, b) => (a?.index ?? 0) - (b?.index ?? 0))
-      .map((d) => (Array.isArray(d?.embedding) ? (d.embedding as number[]) : []));
+      .sort((a, b) => (num(a.index) ?? 0) - (num(b.index) ?? 0))
+      .map((d) => arr(d.embedding).filter((x): x is number => typeof x === "number"));
     if (vectors.some((v) => !v.length)) throw new LLMError("bad_response", { detail: "向量为空（该服务可能不支持 Embedding 或返回了 base64 格式）", where: "Embedding" });
-    return { vectors, usage: json.usage ? mapUsage(json.usage) : undefined };
+    return { vectors, usage: root.usage ? mapUsage(root.usage) : undefined };
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
@@ -216,29 +212,29 @@ export class OpenAICompatibleProvider implements LLMProvider {
         finished = true;
         return;
       }
-      let json: any;
-      try {
-        json = JSON.parse(data);
-      } catch {
+      const parsed = parseJson(data);
+      if (parsed === undefined) {
         throw new LLMError("bad_response", { detail: `无法解析的流式数据：${data.slice(0, 120)}`, where: "流式响应" });
       }
-      if (json?.error) {
-        const msg = typeof json.error === "string" ? json.error : json.error.message ?? JSON.stringify(json.error);
-        throw new LLMError("server", { detail: msg, where: "流式响应" });
-      }
-      if (json?.usage) usage = mapUsage(json.usage);
-      const choice = json?.choices?.[0];
-      if (!choice) return;
-      const delta = choice.delta ?? choice.message ?? {};
-      const reasoning: unknown = delta.reasoning_content ?? delta.reasoning;
-      if (typeof reasoning === "string" && reasoning) yield { type: "reasoning", text: reasoning };
-      if (typeof delta.content === "string" && delta.content) {
-        const s = splitter.push(delta.content);
+      const json = obj(parsed);
+      const err = errorMessage(json.error);
+      if (err) throw new LLMError("server", { detail: err, where: "流式响应" });
+      if (json.usage) usage = mapUsage(json.usage);
+      const first = arr(json.choices)[0];
+      if (!isObject(first)) return;
+      const choice = first;
+      const delta = obj(choice.delta ?? choice.message);
+      const reasoning = str(delta.reasoning_content) ?? str(delta.reasoning);
+      if (reasoning) yield { type: "reasoning", text: reasoning };
+      const content = str(delta.content);
+      if (content) {
+        const s = splitter.push(content);
         if (s.reasoning) yield { type: "reasoning", text: s.reasoning };
         if (s.content) yield { type: "content", text: s.content };
       }
-      if (Array.isArray(delta.tool_calls)) calls.push(delta.tool_calls);
-      if (choice.finish_reason) finishReason = choice.finish_reason;
+      if (Array.isArray(delta.tool_calls)) calls.push(arr(delta.tool_calls));
+      const fin = str(choice.finish_reason);
+      if (fin) finishReason = fin;
     };
 
     for await (const chunk of res.body) {
@@ -362,12 +358,14 @@ export class ToolCallAssembler {
   private parts = new Map<number, ToolCall>();
 
   push(deltas: unknown[]): void {
-    deltas.forEach((d: any, i: number) => {
-      const index = typeof d?.index === "number" ? d.index : i;
+    deltas.forEach((raw, i) => {
+      const d = obj(raw);
+      const fn = obj(d.function);
+      const index = num(d.index) ?? i;
       const cur = this.parts.get(index) ?? { id: "", name: "", arguments: "" };
-      if (d?.id) cur.id = String(d.id);
-      if (d?.function?.name) cur.name += String(d.function.name);
-      if (d?.function?.arguments) cur.arguments += typeof d.function.arguments === "string" ? d.function.arguments : JSON.stringify(d.function.arguments);
+      if (d.id) cur.id = asText(d.id);
+      if (fn.name) cur.name += asText(fn.name);
+      if (fn.arguments) cur.arguments += typeof fn.arguments === "string" ? fn.arguments : JSON.stringify(fn.arguments);
       this.parts.set(index, cur);
     });
   }
@@ -395,45 +393,45 @@ export function resetEffortFallbacks(): void {
   effortFallbacks.clear();
 }
 
-function mapUsage(u: any): Usage {
+function mapUsage(raw: unknown): Usage {
+  const u = obj(raw);
   return {
-    promptTokens: u?.prompt_tokens,
-    completionTokens: u?.completion_tokens,
-    totalTokens: u?.total_tokens,
+    promptTokens: num(u.prompt_tokens),
+    completionTokens: num(u.completion_tokens),
+    totalTokens: num(u.total_tokens),
   };
 }
 
 export function parseCompletionJSON(text: string): ChatResponse {
-  let json: any;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    throw new LLMError("bad_response", { detail: text.slice(0, 200), where: "模型响应" });
-  }
-  if (json?.error) {
-    const msg = typeof json.error === "string" ? json.error : json.error.message ?? JSON.stringify(json.error);
-    throw new LLMError("server", { detail: msg, where: "模型响应" });
-  }
-  const choice = json?.choices?.[0];
-  if (!choice) throw new LLMError("bad_response", { detail: "响应中没有 choices", where: "模型响应" });
-  const msg = choice.message ?? {};
-  const split = splitThinkTags(typeof msg.content === "string" ? msg.content : "");
-  const reasoning = [msg.reasoning_content ?? msg.reasoning ?? "", split.reasoning].filter(Boolean).join("\n");
+  const parsed = parseJson(text);
+  if (parsed === undefined) throw new LLMError("bad_response", { detail: text.slice(0, 200), where: "模型响应" });
+  const json = obj(parsed);
+  const err = errorMessage(json.error);
+  if (err) throw new LLMError("server", { detail: err, where: "模型响应" });
+  const choice = arr(json.choices)[0];
+  if (!isObject(choice)) throw new LLMError("bad_response", { detail: "响应中没有 choices", where: "模型响应" });
+  const msg = obj(choice.message);
+  const split = splitThinkTags(str(msg.content) ?? "");
+  const reasoning = [str(msg.reasoning_content) ?? str(msg.reasoning) ?? "", split.reasoning].filter(Boolean).join("\n");
   const toolCalls = Array.isArray(msg.tool_calls)
-    ? msg.tool_calls
-        .map((tc: any, i: number) => ({
-          id: String(tc?.id ?? `call_${i}`),
-          name: String(tc?.function?.name ?? ""),
-          arguments: typeof tc?.function?.arguments === "string" ? tc.function.arguments : JSON.stringify(tc?.function?.arguments ?? {}),
-        }))
-        .filter((c: ToolCall) => c.name)
+    ? arr(msg.tool_calls)
+        .map((raw, i): ToolCall => {
+          const tc = obj(raw);
+          const fn = obj(tc.function);
+          return {
+            id: asText(tc.id) || `call_${i}`,
+            name: asText(fn.name),
+            arguments: typeof fn.arguments === "string" ? fn.arguments : JSON.stringify(fn.arguments ?? {}),
+          };
+        })
+        .filter((c) => c.name)
     : undefined;
   return {
     content: split.content,
     reasoning,
     toolCalls: toolCalls?.length ? toolCalls : undefined,
-    finishReason: choice.finish_reason ?? undefined,
+    finishReason: str(choice.finish_reason),
     usage: json.usage ? mapUsage(json.usage) : undefined,
-    model: json.model,
+    model: str(json.model),
   };
 }

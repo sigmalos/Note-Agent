@@ -89,7 +89,7 @@ export class PromptService {
     const loaded: CustomPrompt[] = [];
     for (const f of files.sort((a, b) => a.path.localeCompare(b.path))) {
       const content = await vault.cachedRead(f);
-      const fm = metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined;
+      const fm = metadataCache.getFileCache(f)?.frontmatter;
       const p = parsePrompt(f.path, fm, stripFrontmatter(content));
       if (p) loaded.push(p);
     }

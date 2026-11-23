@@ -12,9 +12,9 @@ export function normalizeVaultPath(input: unknown, opts: { configDir?: string; r
   const parts = p.split("/");
   if (parts.some((s) => s === ".." || s === ".")) throw new ToolError(`路径不能包含 . 或 ..：${input}`);
   if (/^[a-zA-Z]:/.test(p)) throw new ToolError(`只能使用仓库内的相对路径：${input}`);
-  const configDir = opts.configDir ?? ".obsidian";
-  if (parts[0] === configDir || parts[0] === ".trash" || parts[0] === ".git") throw new ToolError(`不能访问 ${parts[0]} 目录`);
-  if (/[<>:"|?*\u0000-\u001f]/.test(p)) throw new ToolError(`文件名包含非法字符：${input}`);
+  // Hidden top-level folders: the config folder (Vault#configDir, user-configurable), .trash, .git…
+  if (parts[0].startsWith(".") || (opts.configDir && parts[0] === opts.configDir)) throw new ToolError(`不能访问 ${parts[0]} 目录`);
+  if (/[<>:"|?*]/.test(p) || [...p].some((ch) => ch.charCodeAt(0) < 0x20)) throw new ToolError(`文件名包含非法字符：${input}`);
   if (opts.requireMd && !/\.md$/i.test(p)) p = `${p}.md`;
   return p;
 }

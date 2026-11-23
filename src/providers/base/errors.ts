@@ -1,3 +1,4 @@
+import { obj, parseJson, text as asText } from "../../utils/json";
 import { redact } from "../../utils/redact";
 
 /**
@@ -81,15 +82,15 @@ export class LLMError extends Error {
 export function extractErrorMessage(body: string): string {
   const text = (body || "").trim();
   if (!text) return "";
-  try {
-    const json = JSON.parse(text);
-    const e = json?.error ?? json;
+  const parsed = parseJson(text);
+  if (parsed !== undefined) {
+    const json = obj(parsed);
+    const e = json.error ?? parsed;
     if (typeof e === "string") return e;
-    if (e?.message) return String(e.message);
-    if (json?.message) return String(json.message);
-    if (json?.msg) return String(json.msg);
-  } catch {
-    /* not JSON */
+    const fromError = asText(obj(e).message);
+    if (fromError) return fromError;
+    const fromRoot = asText(json.message) || asText(json.msg);
+    if (fromRoot) return fromRoot;
   }
   return text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 300);
 }
