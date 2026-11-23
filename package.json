@@ -1,6 +1,6 @@
 {
   "name": "obsidian-ai-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Obsidian AI Agent: bring-your-own LLM chat, context-aware AI editing with diff preview.",
   "main": "main.js",
   "private": true,
