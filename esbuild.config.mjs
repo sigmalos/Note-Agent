@@ -4,7 +4,7 @@ import { builtinModules } from "node:module";
 const prod = process.argv[2] === "production";
 
 const context = await esbuild.context({
-  banner: { js: "/* Obsidian AI Agent — bundled by esbuild. Source: src/ */" },
+  banner: { js: "/* Note Agent — bundled by esbuild. Source: https://github.com/sigmalos/Note-Agent */" },
   entryPoints: ["src/main.ts"],
   bundle: true,
   external: [

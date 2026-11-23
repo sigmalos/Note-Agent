@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/sigmalos/Obsidian-Agent/releases"><img src="https://img.shields.io/github/v/release/sigmalos/Obsidian-Agent?label=Release&color=blue" alt="Release"></a>
+  <a href="https://github.com/sigmalos/Note-Agent/releases"><img src="https://img.shields.io/github/v/release/sigmalos/Note-Agent?label=Release&color=blue" alt="Release"></a>
   <img src="https://img.shields.io/badge/Obsidian-1.8.7%2B-7C3AED?logo=obsidian&logoColor=white" alt="Obsidian 1.8.7+">
   <img src="https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License: MIT">
@@ -77,15 +77,15 @@
 
 #### 方式一：从 GitHub Release 安装（推荐）
 
-1. 前往 [Releases](https://github.com/sigmalos/Obsidian-Agent/releases) 页面，下载最新版本的 `main.js`、`manifest.json` 和 `styles.css`。
+1. 前往 [Releases](https://github.com/sigmalos/Note-Agent/releases) 页面，下载最新版本的 `main.js`、`manifest.json` 和 `styles.css`。
 2. 在你的仓库中创建目录：`<你的仓库>/.obsidian/plugins/note-agent/`，并将上述三个文件放入其中。
 3. 打开 Obsidian **设置 → 第三方插件**，关闭安全模式后刷新插件列表，启用 **Note Agent**。
 
 #### 方式二：从源码构建安装
 
 ```bash
-git clone https://github.com/sigmalos/Obsidian-Agent.git
-cd Obsidian-Agent
+git clone https://github.com/sigmalos/Note-Agent.git
+cd Note-Agent
 npm install
 npm run build
 ```

@@ -1,7 +1,15 @@
 {
   "name": "note-agent",
   "version": "0.2.1",
-  "description": "Obsidian AI Agent: bring-your-own LLM chat, context-aware AI editing with diff preview.",
+  "description": "Note Agent: bring-your-own LLM chat and agent for your vault, AI editing with diff preview, inline completion, prompts, semantic search and MCP.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sigmalos/Note-Agent.git"
+  },
+  "homepage": "https://github.com/sigmalos/Note-Agent#readme",
+  "bugs": {
+    "url": "https://github.com/sigmalos/Note-Agent/issues"
+  },
   "main": "main.js",
   "private": true,
   "scripts": {
