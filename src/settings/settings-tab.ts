@@ -348,7 +348,7 @@ export class AIAgentSettingTab extends PluginSettingTab {
         return null;
       }
     })();
-    const model = new Setting(el)
+    new Setting(el)
       .setName("补全模型")
       .setDesc(`建议选择响应快、不带深度思考的小模型。留空时使用补全服务商当前的模型${cfg?.model ? `（${cfg.model}）` : ""}。`)
       .addText((t) => {
@@ -357,7 +357,8 @@ export class AIAgentSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         });
         if (cfg?.models?.length) {
-          const list = model.controlEl.createEl("datalist", { attr: { id: "ai-agent-completion-models" } });
+          // addText runs synchronously inside the Setting chain: use the input's parent, not `model`.
+          const list = t.inputEl.parentElement!.createEl("datalist", { attr: { id: "ai-agent-completion-models" } });
           for (const m of cfg.models) list.createEl("option", { value: m });
           t.inputEl.setAttr("list", list.id);
         }
@@ -401,7 +402,7 @@ export class AIAgentSettingTab extends PluginSettingTab {
       }
     })();
     const embModels = (cfg?.models ?? []).filter((m) => /embed|bge|m3e|gte|e5/i.test(m));
-    const model = new Setting(el)
+    new Setting(el)
       .setName("Embedding 模型")
       .setDesc(`使用 Embedding 服务商${cfg ? `（${cfg.name}）` : ""}上的模型。更换模型或切分参数后需要重建索引。`)
       .addText((t) => {
@@ -409,7 +410,7 @@ export class AIAgentSettingTab extends PluginSettingTab {
           s.ragModel = v.trim();
           await this.plugin.saveSettings();
         });
-        const list = model.controlEl.createEl("datalist", { attr: { id: "ai-agent-embedding-models" } });
+        const list = t.inputEl.parentElement!.createEl("datalist", { attr: { id: "ai-agent-embedding-models" } });
         for (const m of embModels.length ? embModels : cfg?.models ?? []) list.createEl("option", { value: m });
         t.inputEl.setAttr("list", list.id);
       });
