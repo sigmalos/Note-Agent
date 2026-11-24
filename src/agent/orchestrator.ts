@@ -1,10 +1,12 @@
 import type { ChatMode } from "../chat/types";
 import { LLMError } from "../providers/base/errors";
 import type { LLMMessage, LLMProvider, ReasoningEffort, ToolCall, Usage } from "../providers/base/provider.types";
+import { abortable, isAbortError } from "../utils/async";
 import { arr, obj, text } from "../utils/json";
 import { applyChange } from "./changes";
+import type { Classifier, ClassifierVerdict } from "./classifier";
 import { parseArguments, validateInput } from "./schema";
-import { PLAN_TOOL, toolByName, toolsForMode } from "./tools";
+import { PLAN_TOOL, agentTools, toolByName } from "./tools";
 import {
   ToolError,
   type AgentLimits,
@@ -50,11 +52,13 @@ export interface AgentRunOptions {
   maxReadChars: number;
   /** Semantic (vector) search, when enabled. */
   semantic?: ToolContext["semantic"];
-  /** Extra tools (MCP servers). Read tools are offered in every mode, others not in Ask. */
+  /** Extra tools (MCP servers). */
   extraTools?: AgentTool[];
   signal: AbortSignal;
-  /** Ask the user about a write (Accept mode) or delete. Resolves when they decide. */
+  /** Ask the user about an action the mode does not allow on its own. Resolves when they decide. */
   approve: (step: ToolStep) => Promise<Approval>;
+  /** Auto mode: safety classifier for actions that would otherwise need approval. */
+  classify?: Classifier;
   onUpdate: () => void;
   now?: () => number;
 }
@@ -64,8 +68,14 @@ export const TERMINAL_STATES: AgentState[] = ["completed", "cancelled", "failed"
 /**
  * Agent loop (SRS §4.6.2 / §8): call the model with tools → run the requested tools (validated,
  * permission-checked) → feed results back → repeat until it answers without tools or a limit
- * is reached. Writes are planned first and applied only after approval (Accept) or directly
- * (Auto, undoable); deletes always need approval.
+ * is reached. Read tools always run. Everything else follows the mode, as Claude Code's
+ * permission modes do:
+ * - manual: every note change, delete and side-effecting external tool asks the user first;
+ * - accept: note edits (create / modify / append / move) are applied directly (undoable);
+ *   deletes and side-effecting external tools still ask;
+ * - auto: a safety classifier reviews each of those actions; allowed ones run, blocked ones
+ *   (or a classifier failure) ask the user.
+ * Writes are always planned first, so approval cards and the classifier see the exact change.
  */
 export class AgentRunner {
   private readonly now: () => number;
@@ -74,6 +84,7 @@ export class AgentRunner {
   private fileOps = 0;
   private outputBudget: number;
   private started = 0;
+  private userMessages: string[] = [];
 
   constructor(private readonly o: AgentRunOptions) {
     this.now = o.now ?? (() => Date.now());
@@ -84,8 +95,8 @@ export class AgentRunner {
   async run(messages: LLMMessage[], target: AgentTarget): Promise<void> {
     const turn: AgentTurn = (target.agent = { steps: [], state: "analyzing", iterations: 0 });
     const convo = [...messages];
-    const extra = (this.o.extraTools ?? []).filter((t) => this.o.mode !== "ask" || t.permission === "read");
-    const tools = [...toolsForMode(this.o.mode, { semantic: !!this.o.semantic }), ...extra].map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
+    const tools = [...agentTools({ semantic: !!this.o.semantic }), ...(this.o.extraTools ?? [])].map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
+    this.userMessages = messages.filter((m) => m.role === "user" && typeof m.content === "string" && m.content.trim()).map((m) => m.content);
     this.started = this.now();
     const { limits } = this.o;
 
@@ -278,9 +289,14 @@ export class AgentRunner {
     const ctx: ToolContext = { port: this.o.port, maxReadChars: this.o.maxReadChars, semantic: this.o.semantic, signal: this.o.signal };
     turn.state = "executing";
 
+    const stopped = () => fail("skipped", "任务已停止，未执行");
+    const isStop = (e: unknown) => isAbortError(e) || this.o.signal.aborted;
+
     if (tool.permission === "read") {
       try {
-        const r = await tool.run!(args, ctx);
+        // Raced against the stop button: a read stuck on a slow or cloud-only note must not
+        // keep the task running.
+        const r = await abortable(tool.run!(args, ctx), this.o.signal);
         step.status = r.ok ? "done" : "error";
         step.summary = r.summary;
         step.paths = r.paths;
@@ -294,38 +310,21 @@ export class AgentRunner {
         this.o.onUpdate();
         return { content: output };
       } catch (e) {
+        if (isStop(e)) return stopped();
         return fail("error", e instanceof ToolError ? e.message : `执行失败：${(e as Error).message}`);
       }
     }
 
-    // write / delete
-    if (this.o.mode === "ask") return fail("denied", tool.plan ? "Ask 模式下不能修改笔记，请切换到 Accept 或 Auto 模式。" : "Ask 模式下不能使用该工具，请切换到 Accept 或 Auto 模式。");
-
-    // External tools with side effects (MCP): confirm in Accept, run in Auto.
+    // External tools with side effects (MCP).
     if (!tool.plan && tool.run) {
-      if (this.o.mode === "accept" && !this.approveAll) {
-        step.status = "awaiting";
-        step.summary = "等待确认";
-        turn.state = "waiting_approval";
-        this.o.onUpdate();
-        const decision = await this.waitApproval(step);
-        if (this.o.signal.aborted) return fail("skipped", "任务已停止，未执行");
-        if (decision === "reject") {
-          step.status = "rejected";
-          step.summary = "已拒绝";
-          step.ms = this.now() - t0;
-          turn.state = "executing";
-          this.o.onUpdate();
-          return { content: "用户拒绝了这次工具调用。请不要重复同样的调用；如有需要，询问用户。" };
-        }
-        if (decision === "approve_all") this.approveAll = true;
-        turn.state = "executing";
-        step.status = "running";
-        step.summary = "";
-        this.o.onUpdate();
+      const gate = await this.permit(tool, step, turn);
+      if (gate === "aborted") return stopped();
+      if (gate === "rejected") {
+        this.markRejected(step, turn, t0);
+        return { content: "用户拒绝了这次工具调用。请不要重复同样的调用；如有需要，询问用户。" };
       }
       try {
-        const r = await tool.run(args, ctx);
+        const r = await abortable(tool.run(args, ctx), this.o.signal);
         step.status = r.ok ? "done" : "error";
         step.summary = r.summary;
         step.paths = r.paths;
@@ -335,6 +334,7 @@ export class AgentRunner {
         this.o.onUpdate();
         return { content: r.output };
       } catch (e) {
+        if (isStop(e)) return stopped();
         return fail("error", `执行失败：${(e as Error).message}`);
       }
     }
@@ -343,30 +343,19 @@ export class AgentRunner {
       return fail("skipped", "超出文件操作数上限，未执行", "limit");
     }
     try {
-      step.change = await tool.plan!(args, ctx);
+      step.change = await abortable(tool.plan!(args, ctx), this.o.signal);
     } catch (e) {
+      if (isStop(e)) return stopped();
       return fail("error", e instanceof ToolError ? e.message : `无法生成修改：${(e as Error).message}`);
     }
 
-    const needsApproval = tool.permission === "delete" || (this.o.mode === "accept" && !this.approveAll);
-    if (needsApproval) {
-      step.status = "awaiting";
-      step.summary = "等待确认";
-      turn.state = "waiting_approval";
-      this.o.onUpdate();
-      const decision = await this.waitApproval(step);
-      if (this.o.signal.aborted) return fail("skipped", "任务已停止，未执行");
-      if (decision === "reject") {
-        step.status = "rejected";
-        step.summary = "已拒绝";
-        step.ms = this.now() - t0;
-        turn.state = "executing";
-        this.o.onUpdate();
-        return { content: "用户拒绝了这次操作，文件未被修改。请不要重复同样的操作；如有需要，询问用户想如何调整。" };
-      }
-      if (decision === "approve_all" && tool.permission !== "delete") this.approveAll = true;
-      turn.state = "executing";
+    const gate = await this.permit(tool, step, turn);
+    if (gate === "aborted") return stopped();
+    if (gate === "rejected") {
+      this.markRejected(step, turn, t0);
+      return { content: "用户拒绝了这次操作，文件未被修改。请不要重复同样的操作；如有需要，询问用户想如何调整。" };
     }
+    turn.state = "executing";
 
     try {
       await applyChange(this.o.port, step.change);
@@ -381,6 +370,70 @@ export class AgentRunner {
     this.o.onUpdate();
     const c = step.change;
     return { content: c.kind === "rename" ? `已将 ${c.from} 移动到 ${c.to}。` : `${APPLIED_SUMMARY[c.kind]}：${c.path}` };
+  }
+
+  /**
+   * May this non-read action run? Applies the mode (see the class comment); asks the user when
+   * the mode does not allow it on its own.
+   */
+  private async permit(tool: AgentTool, step: ToolStep, turn: AgentTurn): Promise<"run" | "rejected" | "aborted"> {
+    const isDelete = tool.permission === "delete";
+    const isNoteEdit = !!tool.plan && !isDelete;
+    const { mode } = this.o;
+    if (this.approveAll && !isDelete) return "run";
+    if (mode === "accept" && isNoteEdit) return "run";
+    if (mode === "auto") {
+      const verdict = await this.review(step, turn);
+      if (verdict === "aborted") return "aborted";
+      if (verdict.decision === "allow") return "run";
+    }
+
+    step.status = "awaiting";
+    step.summary = "等待确认";
+    turn.state = "waiting_approval";
+    this.o.onUpdate();
+    const decision = await this.waitApproval(step);
+    if (this.o.signal.aborted) return "aborted";
+    if (decision === "reject") return "rejected";
+    if (decision === "approve_all" && !isDelete) this.approveAll = true;
+    turn.state = "executing";
+    step.status = "running";
+    step.summary = "";
+    this.o.onUpdate();
+    return "run";
+  }
+
+  /** Auto mode: ask the safety classifier. Failures count as "ask the user". */
+  private async review(step: ToolStep, turn: AgentTurn): Promise<NonNullable<ToolStep["review"]> | "aborted"> {
+    step.summary = "安全检查中…";
+    this.o.onUpdate();
+    let verdict: NonNullable<ToolStep["review"]>;
+    if (!this.o.classify) verdict = { decision: "error", reason: "未配置安全分类器，需要你确认" };
+    else {
+      try {
+        const previousActions = turn.steps
+          .filter((s): s is ToolStep => s.type === "tool" && s !== step && s.name !== PLAN_TOOL.name)
+          .map((s) => `${s.name} ${s.detail ?? ""}（${s.status}）`.trim());
+        const v: ClassifierVerdict = await this.o.classify({ userMessages: this.userMessages, previousActions, step, signal: this.o.signal });
+        verdict = v;
+      } catch (e) {
+        if (isAbortError(e) || this.o.signal.aborted) return "aborted";
+        verdict = { decision: "error", reason: `安全检查失败（${(e as Error).message}），需要你确认` };
+      }
+    }
+    if (this.o.signal.aborted) return "aborted";
+    step.review = verdict;
+    step.summary = "";
+    this.o.onUpdate();
+    return verdict;
+  }
+
+  private markRejected(step: ToolStep, turn: AgentTurn, t0: number): void {
+    step.status = "rejected";
+    step.summary = "已拒绝";
+    step.ms = this.now() - t0;
+    turn.state = "executing";
+    this.o.onUpdate();
   }
 
   private waitApproval(step: ToolStep): Promise<Approval> {

@@ -17,6 +17,7 @@ import { KeyStore, type SecretStorageLike } from "./settings/key-store";
 import { AIAgentSettingTab } from "./settings/settings-tab";
 import { normalizeSettings, type PluginSettings } from "./settings/settings";
 import { ChatView } from "./ui/chat-view";
+import { registerFlatIcons } from "./ui/components/flat-icons";
 import { logger } from "./utils/logger";
 
 export default class AIAgentPlugin extends Plugin {
@@ -52,6 +53,7 @@ export default class AIAgentPlugin extends Plugin {
     this.edits = new EditManager(this);
     this.vaultPort = new ObsidianVaultPort(this.app, this.context);
 
+    registerFlatIcons();
     this.registerView(VIEW_TYPE_CHAT, (leaf) => new ChatView(leaf, this));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.context.track()));
     this.app.workspace.onLayoutReady(() => this.context.track());
@@ -112,6 +114,10 @@ export default class AIAgentPlugin extends Plugin {
     if (s.defaultProviderId === id) s.defaultProviderId = s.providers[0]?.id ?? "";
     for (const k of Object.keys(s.taskModels) as Array<keyof typeof s.taskModels>) {
       if (s.taskModels[k] === id) s.taskModels[k] = "";
+    }
+    if (s.autoClassifierProviderId === id) {
+      s.autoClassifierProviderId = "";
+      s.autoClassifierModel = "";
     }
     await this.saveSettings();
   }

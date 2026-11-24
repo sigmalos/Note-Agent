@@ -1,5 +1,5 @@
-import { DEFAULT_EFFORT, DEFAULT_MODE } from "./chat-options";
-import type { ChatSession, SessionSummary } from "./types";
+import { DEFAULT_EFFORT, DEFAULT_MODE, MODE_OPTIONS, migrateMode } from "./chat-options";
+import { MODE_SCHEMA, type ChatSession, type SessionSummary } from "./types";
 
 /** Subset of Obsidian's DataAdapter used for persistence (also easy to fake in tests). */
 export interface StorageAdapter {
@@ -32,7 +32,22 @@ export function createSession(opts: SessionOptions = {}): ChatSession {
     model: opts.model ?? "",
     effort: opts.effort ?? DEFAULT_EFFORT,
     mode: opts.mode ?? DEFAULT_MODE,
+    modeSchema: MODE_SCHEMA,
     messages: [],
+  };
+}
+
+/** Bring a stored session's modes up to date (pre-0.3 sessions used ask / accept / auto). */
+export function upgradeSession(s: ChatSession): ChatSession {
+  if (s.modeSchema === MODE_SCHEMA) {
+    const valid = (m: unknown) => MODE_OPTIONS.some((o) => o.id === m);
+    return valid(s.mode) ? s : { ...s, mode: DEFAULT_MODE };
+  }
+  return {
+    ...s,
+    mode: migrateMode(s.mode),
+    modeSchema: MODE_SCHEMA,
+    messages: s.messages.map((m) => (m.mode ? { ...m, mode: migrateMode(m.mode) } : m)),
   };
 }
 
@@ -91,7 +106,7 @@ export class SessionStore {
     try {
       const s = JSON.parse(await this.adapter.read(path)) as ChatSession;
       if (!s || !Array.isArray(s.messages)) return null;
-      return { ...s, providerId: s.providerId ?? "" };
+      return upgradeSession({ ...s, providerId: s.providerId ?? "" });
     } catch {
       return null;
     }

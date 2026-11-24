@@ -3,8 +3,15 @@ import type { ReasoningEffort, Usage } from "../providers/base/provider.types";
 import type { AgentTurn } from "../agent/orchestrator";
 import type { NoteEditRecord } from "./note-edits";
 
-/** How far the chat may go with notes: answer only, propose edits for review, or apply them. */
-export type ChatMode = "ask" | "accept" | "auto";
+/**
+ * Permission mode, as in Claude Code: manual asks before every change, accept applies note
+ * edits directly, auto lets a safety classifier decide what needs asking.
+ */
+export type ChatMode = "manual" | "accept" | "auto";
+
+/** Version of the `mode` values stored in a session. Absent: pre-0.3 values, where "ask" was read
+ *  only, "accept" confirmed each edit and "auto" applied edits. */
+export const MODE_SCHEMA = 2;
 
 /** What was attached to a request, recorded for transparency (SRS §4.3.3 / §16.2). */
 export interface ContextAttachment {
@@ -58,6 +65,8 @@ export interface ChatSession {
   model?: string;
   effort?: ReasoningEffort;
   mode?: ChatMode;
+  /** MODE_SCHEMA when `mode` (and messages' modes) use the current values. */
+  modeSchema?: number;
   messages: ChatMessage[];
 }
 

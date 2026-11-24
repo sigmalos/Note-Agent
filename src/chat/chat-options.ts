@@ -12,7 +12,7 @@ export interface ChatOption<T extends string> {
 }
 
 export const DEFAULT_EFFORT: ReasoningEffort = "low";
-export const DEFAULT_MODE: ChatMode = "ask";
+export const DEFAULT_MODE: ChatMode = "manual";
 
 export const EFFORT_OPTIONS: ChatOption<ReasoningEffort>[] = [
   { id: "low", short: "低", title: "低", description: "少思考，回答最快（默认）", icons: ["signal-low"] },
@@ -23,27 +23,34 @@ export const EFFORT_OPTIONS: ChatOption<ReasoningEffort>[] = [
 
 export const MODE_OPTIONS: ChatOption<ChatMode>[] = [
   {
-    id: "ask",
-    short: "Ask",
-    title: "Ask · 问答",
-    description: "只回答问题，不修改笔记",
-    icons: ["message-circle-question-mark", "message-circle-question", "message-circle"],
+    id: "manual",
+    short: "Manual",
+    title: "Manual · 逐项确认",
+    description: "每次修改、删除笔记或调用外部工具前都先征求你的同意（默认）",
+    icons: ["note-agent-mode-manual", "hand"],
   },
   {
     id: "accept",
     short: "Accept",
-    title: "Accept · 确认后修改",
-    description: "可修改附带的笔记，每处修改先预览，由你接受",
-    icons: ["file-check", "file-check-2", "check"],
+    title: "Accept · 自动接受编辑",
+    description: "新建、修改、移动笔记直接写入（可撤销）；删除和外部工具仍需确认",
+    icons: ["note-agent-mode-accept", "fast-forward"],
   },
   {
     id: "auto",
     short: "Auto",
-    title: "Auto · 自动修改",
-    description: "修改直接写入附带的笔记，可随时撤销",
-    icons: ["zap"],
+    title: "Auto · 安全分类器把关",
+    description: "由安全分类器审查每个操作，符合你请求的直接执行，可疑的再询问你",
+    icons: ["note-agent-mode-auto", "zap"],
   },
 ];
+
+/** Map a session's stored mode to the current modes (sessions saved before MODE_SCHEMA). */
+export function migrateMode(mode: string | undefined): ChatMode {
+  // Old "accept" asked before every edit (= manual); old "auto" applied edits (= accept).
+  if (mode === "auto") return "accept";
+  return "manual";
+}
 
 export function effortOption(id: ReasoningEffort | undefined): ChatOption<ReasoningEffort> {
   return EFFORT_OPTIONS.find((o) => o.id === id) ?? EFFORT_OPTIONS.find((o) => o.id === DEFAULT_EFFORT)!;

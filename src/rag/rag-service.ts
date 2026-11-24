@@ -107,7 +107,7 @@ export class RagService {
     const notes = app.vault
       .getMarkdownFiles()
       .filter((f) => !this.plugin.vaultPort.isExcluded(f.path) && !this.plugin.prompts.inFolder(f.path))
-      .map((f) => ({ path: f.path, title: f.basename, mtime: f.stat.mtime, size: f.stat.size, read: () => app.vault.cachedRead(f) }));
+      .map((f) => ({ path: f.path, title: f.basename, mtime: f.stat.mtime, size: f.stat.size, read: () => this.readForIndex(f.path) }));
 
     this.abort = new AbortController();
     const signal = this.abort.signal;
@@ -155,6 +155,13 @@ export class RagService {
   }
 
   /** Semantic search; brings the index up to date first (fast when nothing changed). */
+  /** Note content for indexing; online-only notes of a cloud-synced vault are skipped, not downloaded. */
+  private async readForIndex(path: string): Promise<string> {
+    const content = await this.plugin.vaultPort.readLocal(path, { timeoutMs: 10_000 });
+    if (content === null) throw new Error("笔记尚未从云端下载到本地，已跳过（下载后再更新索引即可）");
+    return content;
+  }
+
   async query(text: string, opts: { folder?: string; topK?: number; signal?: AbortSignal } = {}): Promise<RagHit[]> {
     if (!this.enabled) throw new Error("语义检索未启用：请在设置 → 语义检索中开启并选择 Embedding 模型");
     await this.load();

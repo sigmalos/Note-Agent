@@ -1,6 +1,8 @@
 import { appendText, findTarget } from "../chat/note-edits";
 import { normalizeVaultPath, parentFolder, resolveNotePath } from "./paths";
-import { searchNotes, stripFrontmatter, type SearchDoc } from "./search";
+import { hasTag, inFolder, searchNotesAsync, stripFrontmatter } from "./search";
+import { loadSearchDocs } from "./vault-scan";
+import { TIMED_OUT, abortable, withTimeout } from "../utils/async";
 import { arr, num, obj, str as optStr, text } from "../utils/json";
 import { ToolError, type AgentTool, type FileChange, type ToolContext, type ToolResult } from "./types";
 
@@ -38,9 +40,16 @@ function clip(text: string, max: number): { text: string; truncated: boolean } {
   return text.length > max ? { text: text.slice(0, max), truncated: true } : { text, truncated: false };
 }
 
-async function searchDocs(ctx: ToolContext): Promise<SearchDoc[]> {
-  const notes = ctx.port.listNotes().filter((n) => !ctx.port.isExcluded(n.path));
-  return Promise.all(notes.map(async (info) => ({ info, content: await ctx.port.read(info.path).catch(() => "") })));
+/** How long reading one note may take (an online-only note in a cloud vault downloads first). */
+export const READ_TIMEOUT_MS = 45_000;
+
+/** Read a note for a tool: stops on abort and gives up when the download takes too long. */
+async function readNote(ctx: ToolContext, path: string): Promise<string> {
+  const r = await abortable(withTimeout(ctx.port.read(path), READ_TIMEOUT_MS), ctx.signal);
+  if (r === TIMED_OUT) {
+    throw new ToolError(`读取超时：${path} 可能只存在于云端、尚未下载到本地（或同步服务未响应）。请稍后重试，或让用户先在 Obsidian 中打开它。`);
+  }
+  return r;
 }
 
 export const TOOLS: AgentTool[] = [
@@ -88,11 +97,33 @@ export const TOOLS: AgentTool[] = [
       return [query && `“${query}”`, folder && `📁 ${folder}`, tag && `#${tag.replace(/^#/, "")}`].filter(Boolean).join(" ");
     },
     async run(input, ctx) {
-      const hits = searchNotes(await searchDocs(ctx), text(input.query), { folder: optStr(input.folder), tag: optStr(input.tag), limit: num(input.limit) ?? 10 });
-      if (!hits.length) return ok({ results: [], note: "没有匹配的笔记，可以换个关键词或减少关键词。" }, "没有找到匹配的笔记");
+      const folder = optStr(input.folder);
+      const tag = optStr(input.tag);
+      // Filter on metadata first so only candidate notes are read.
+      const pool = ctx.port.listNotes().filter((n) => !ctx.port.isExcluded(n.path) && inFolder(n.path, folder) && hasTag(n, tag));
+      const query = text(input.query);
+      const { docs, stats } = query.trim()
+        ? await loadSearchDocs(ctx.port, pool, { signal: ctx.signal })
+        : { docs: pool.map((info) => ({ info, content: "", offline: true })), stats: { read: 0, unread: 0 } };
+      const hits = await searchNotesAsync(docs, query, { folder, tag, limit: num(input.limit) ?? 10, signal: ctx.signal });
+      const unread =
+        stats.unread > 0
+          ? `${stats.unread} 篇笔记未下载到本地或读取过慢（常见于 iCloud / OneDrive 等云端仓库），只按文件名、路径、标签、标题和属性匹配，没有搜索正文。需要时可用 read_file 读取（会先下载）。`
+          : undefined;
+      const suffix = stats.unread > 0 ? ` · ${stats.unread} 篇仅匹配文件名/标签` : "";
+      if (!hits.length) return ok({ results: [], note: "没有匹配的笔记，可以换个关键词或减少关键词。", unread }, `没有找到匹配的笔记${suffix}`);
       return ok(
-        { results: hits.map((h) => ({ path: h.path, snippet: h.snippet, tags: h.tags.length ? h.tags : undefined, matched: h.matched.join("、") })) },
-        `找到 ${hits.length} 篇笔记`,
+        {
+          results: hits.map((h) => ({
+            path: h.path,
+            snippet: h.snippet || undefined,
+            tags: h.tags.length ? h.tags : undefined,
+            matched: h.matched.join("、") || undefined,
+            content_not_searched: h.offline && query.trim() ? true : undefined,
+          })),
+          unread,
+        },
+        `找到 ${hits.length} 篇笔记${suffix}`,
         hits.map((h) => h.path),
       );
     },
@@ -143,7 +174,7 @@ export const TOOLS: AgentTool[] = [
     describe: (i) => text(i.path),
     async run(input, ctx) {
       const path = existingNote(ctx, input.path);
-      const all = await ctx.port.read(path);
+      const all = await readNote(ctx, path);
       const offset = Math.min(num(input.offset) ?? 0, all.length);
       const c = clip(all.slice(offset), ctx.maxReadChars);
       const next = c.truncated ? offset + c.text.length : undefined;
@@ -246,7 +277,7 @@ export const TOOLS: AgentTool[] = [
     },
     async plan(input, ctx): Promise<FileChange> {
       const path = existingNote(ctx, input.path);
-      const before = await ctx.port.read(path);
+      const before = await readNote(ctx, path);
       let after = before;
       arr(input.edits).map((raw) => ({ search: text(obj(raw).search), replace: text(obj(raw).replace) })).forEach((e, i) => {
         if (!e.search.trim()) throw new ToolError(`第 ${i + 1} 处修改的 search 为空；追加内容请使用 append_file。`);
@@ -272,7 +303,7 @@ export const TOOLS: AgentTool[] = [
     describe: (i) => text(i.path),
     async plan(input, ctx): Promise<FileChange> {
       const path = existingNote(ctx, input.path);
-      const before = await ctx.port.read(path);
+      const before = await readNote(ctx, path);
       const content = text(input.content);
       if (!content.trim()) throw new ToolError("追加的内容为空。");
       return { kind: "modify", path, before, after: before + appendText(before, content) };
@@ -307,7 +338,7 @@ export const TOOLS: AgentTool[] = [
     describe: (i) => text(i.path),
     async plan(input, ctx): Promise<FileChange> {
       const path = existingNote(ctx, input.path);
-      return { kind: "delete", path, before: await ctx.port.read(path) };
+      return { kind: "delete", path, before: await readNote(ctx, path) };
     },
   },
 ];
@@ -343,10 +374,9 @@ export function toolByName(name: string): AgentTool | undefined {
   return name === PLAN_TOOL.name ? PLAN_TOOL : TOOLS.find((t) => t.name === name);
 }
 
-/** Tools offered to the model in a mode: Ask mode gets read tools only. */
-export function toolsForMode(mode: "ask" | "accept" | "auto", opts: { semantic?: boolean } = {}): AgentTool[] {
-  let tools = mode === "ask" ? TOOLS.filter((t) => t.permission === "read") : TOOLS;
-  if (!opts.semantic) tools = tools.filter((t) => t.name !== "semantic_search");
+/** Tools offered to the model. Every mode gets all of them; the mode decides what needs approval. */
+export function agentTools(opts: { semantic?: boolean } = {}): AgentTool[] {
+  const tools = opts.semantic ? TOOLS : TOOLS.filter((t) => t.name !== "semantic_search");
   return [PLAN_TOOL, ...tools];
 }
 

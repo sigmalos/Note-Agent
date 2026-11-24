@@ -374,6 +374,7 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 .ai-agent-composer-footer .ai-agent-prompts-btn { flex: none; margin-left: 1px; }
 .ai-agent-picker.is-mode.is-mode-accept { color: var(--text-accent); }
 .ai-agent-picker.is-mode.is-mode-auto { color: var(--color-orange); }
+.ai-agent-picker.is-mode .ai-agent-picker-icon svg { width: 13px; height: 13px; }
 .ai-agent-composer { container-type: inline-size; container-name: ai-composer; }
 @container ai-composer (max-width: 400px) {
   .ai-agent-picker.is-provider .ai-agent-picker-label { display: none; }
@@ -399,6 +400,7 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 .ai-agent-send-icon { display: inline-flex; }
 .ai-agent-send svg { width: 15px; height: 15px; }
 .ai-agent-chat .ai-agent-send.is-busy { background: var(--background-modifier-error); color: var(--text-on-accent); }
+.ai-agent-chat .ai-agent-send svg { width: 14px; height: 14px; }
 
 /* history modal */
 .ai-agent-session-list { display: flex; flex-direction: column; max-height: 60vh; overflow-y: auto; }
@@ -574,7 +576,8 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 
 /* ---- send / stop ---- */
 .ai-agent-send { transition: background-color 200ms ease, color 200ms ease, transform 160ms var(--ai-ease), box-shadow 160ms ease; }
-.ai-agent-send:hover:not(:disabled) { box-shadow: 0 2px 8px hsla(var(--interactive-accent-hsl), 0.35); }
+.ai-agent-chat .ai-agent-send:hover:not(:disabled) { background: var(--interactive-accent-hover); }
+.ai-agent-chat .ai-agent-send.is-busy:hover:not(:disabled) { background: var(--text-error); }
 .ai-agent-send.is-swapping .ai-agent-send-icon { display: inline-flex; animation: ai-agent-pop 320ms var(--ai-spring); }
 .ai-agent-send.is-busy .ai-agent-send-icon svg { fill: currentColor; }
 
@@ -998,7 +1001,72 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 .ai-agent-agent-stop svg { width: 13px; height: 13px; }
 .ai-agent-change .ai-agent-edit-card-kind { color: var(--text-muted); }
 .ai-agent-diff-gap { color: var(--text-faint); line-height: 1; margin: 2px 0; }
+/* ---- flat buttons: solid fills, no shadows, borders or gradients ---- */
+:is(.ai-agent-chat, .ai-agent-diff-modal, .ai-agent-edit-prompt, .ai-agent-session-modal) button:not(.clickable-icon),
+.ai-agent-settings .ai-agent-advanced-toggle {
+  box-shadow: none;
+  border: none;
+  background-image: none;
+}
+:is(.ai-agent-chat, .ai-agent-diff-modal, .ai-agent-edit-prompt, .ai-agent-session-modal) button:not(.clickable-icon):hover:not(:disabled) { box-shadow: none; }
+:is(.ai-agent-edit-card-actions, .ai-agent-edit-bulk, .ai-agent-changed-head) button:not(.mod-cta):not(.mod-warning),
+.ai-agent-diff-modal button.ai-agent-diff-btn:not(.mod-cta) {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+:is(.ai-agent-edit-card-actions, .ai-agent-edit-bulk, .ai-agent-changed-head) button:not(.mod-cta):not(.mod-warning):hover:not(:disabled),
+.ai-agent-diff-modal button.ai-agent-diff-btn:not(.mod-cta):hover:not(:disabled) {
+  background: var(--background-modifier-active-hover);
+}
+:is(.ai-agent-chat, .ai-agent-diff-modal, .ai-agent-edit-prompt) button.mod-cta { background: var(--interactive-accent); color: var(--text-on-accent); }
+:is(.ai-agent-chat, .ai-agent-diff-modal, .ai-agent-edit-prompt) button.mod-cta:hover:not(:disabled) { background: var(--interactive-accent-hover); }
 .ai-agent-edit-card-actions button.mod-warning { background: var(--background-modifier-error); color: var(--text-on-accent); }
+.ai-agent-edit-card-actions button.mod-warning:hover:not(:disabled) { background: var(--text-error); }
+.ai-agent-btn-icon { display: inline-flex; }
+.ai-agent-edit-card-actions .ai-agent-btn-icon svg { width: 12px; height: 12px; }
+
+/* Auto mode: safety classifier verdict on an action */
+.ai-agent-review {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  padding: 6px 14px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  border-top: 1px solid var(--background-modifier-border);
+}
+.ai-agent-tool-body .ai-agent-review { border-top: none; padding: 4px 0; }
+.ai-agent-review-icon { display: inline-flex; }
+.ai-agent-review-icon svg { width: 12px; height: 12px; }
+.ai-agent-review.is-allow .ai-agent-review-icon { color: var(--color-green); }
+.ai-agent-review.is-block .ai-agent-review-icon,
+.ai-agent-review.is-error .ai-agent-review-icon { color: var(--color-orange); }
+.ai-agent-review-title { color: var(--text-normal); font-weight: var(--font-medium); }
+.ai-agent-review-reason { color: var(--text-muted); }
+
+/* settings: everything except providers folds under “高级选项” */
+.ai-agent-settings .ai-agent-advanced-toggle {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  width: 100%;
+  height: auto;
+  margin: var(--size-4-6) 0 var(--size-4-2);
+  padding: var(--size-4-2) var(--size-4-3);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  font-weight: var(--font-semibold);
+  text-align: left;
+  white-space: normal;
+}
+.ai-agent-settings .ai-agent-advanced-toggle:hover { background: var(--background-modifier-hover); }
+.ai-agent-advanced-toggle-icon { display: inline-flex; transition: transform 160ms var(--ai-ease); }
+.ai-agent-advanced-toggle-icon svg { width: 16px; height: 16px; }
+.ai-agent-advanced-toggle.is-open .ai-agent-advanced-toggle-icon { transform: rotate(90deg); }
+.ai-agent-advanced-toggle-hint { flex-basis: 100%; padding-left: 24px; font-size: var(--font-ui-smaller); font-weight: var(--font-normal); color: var(--text-muted); }
 .ai-agent-changed {
   margin: var(--size-4-3) 0 var(--size-2-2);
   padding: 12px 14px;

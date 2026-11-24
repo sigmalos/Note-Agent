@@ -1,3 +1,4 @@
+import { AbortedError, yieldToUI } from "../utils/async";
 import type { NoteInfo } from "./types";
 
 /**
@@ -19,11 +20,15 @@ export interface SearchHit {
   tags: string[];
   /** Fields that matched, e.g. ["标题", "正文 ×3"]. */
   matched: string[];
+  /** The note's text was not searched (online only in a cloud-synced vault, or too slow). */
+  offline?: boolean;
 }
 
 export interface SearchDoc {
   info: NoteInfo;
   content: string;
+  /** Content unavailable: match on metadata only. */
+  offline?: boolean;
 }
 
 const norm = (s: string) => s.toLowerCase();
@@ -126,29 +131,61 @@ export function hasTag(info: NoteInfo, tag: string | undefined): boolean {
   });
 }
 
-export function searchNotes(docs: SearchDoc[], query: string, opts: SearchOptions = {}): SearchHit[] {
-  const terms = queryTerms(query);
-  const limit = Math.max(1, Math.min(opts.limit ?? 10, 50));
-  const pool = docs.filter((d) => inFolder(d.info.path, opts.folder) && hasTag(d.info, opts.tag));
+type Scored = { d: SearchDoc; score: number; matchedTerms: number; matched: string[] };
+
+function prepare(docs: SearchDoc[], query: string, opts: SearchOptions) {
+  return {
+    terms: queryTerms(query),
+    limit: Math.max(1, Math.min(opts.limit ?? 10, 50)),
+    pool: docs.filter((d) => inFolder(d.info.path, opts.folder) && hasTag(d.info, opts.tag)),
+  };
+}
+
+function hitOf(d: SearchDoc, terms: string[], score = 0, matched: string[] = []): SearchHit {
+  return {
+    path: d.info.path,
+    title: d.info.basename,
+    score: Math.round(score * 10) / 10,
+    snippet: d.offline ? "" : makeSnippet(d.content, terms),
+    tags: d.info.tags,
+    matched,
+    ...(d.offline ? { offline: true } : {}),
+  };
+}
+
+function pick(pool: SearchDoc[], scored: Scored[], terms: string[], limit: number): SearchHit[] {
   if (!terms.length) {
     // Filter-only search (folder / tag): most recently modified first.
-    return pool
+    return [...pool]
       .sort((a, b) => b.info.mtime - a.info.mtime)
       .slice(0, limit)
-      .map((d) => ({ path: d.info.path, title: d.info.basename, score: 0, snippet: makeSnippet(d.content, []), tags: d.info.tags, matched: [] }));
+      .map((d) => hitOf(d, []));
   }
-  const scored = pool.map((d) => ({ d, ...scoreDoc(d, terms) })).filter((x) => x.score > 0);
-  const all = scored.filter((x) => x.matchedTerms === terms.length);
-  const chosen = all.length ? all : scored;
+  const positive = scored.filter((x) => x.score > 0);
+  const all = positive.filter((x) => x.matchedTerms === terms.length);
+  const chosen = all.length ? all : positive;
   return chosen
     .sort((a, b) => b.matchedTerms - a.matchedTerms || b.score - a.score || b.d.info.mtime - a.d.info.mtime)
     .slice(0, limit)
-    .map((x) => ({
-      path: x.d.info.path,
-      title: x.d.info.basename,
-      score: Math.round(x.score * 10) / 10,
-      snippet: makeSnippet(x.d.content, terms),
-      tags: x.d.info.tags,
-      matched: x.matched,
-    }));
+    .map((x) => hitOf(x.d, terms, x.score, x.matched));
+}
+
+export function searchNotes(docs: SearchDoc[], query: string, opts: SearchOptions = {}): SearchHit[] {
+  const { terms, limit, pool } = prepare(docs, query, opts);
+  const scored = terms.length ? pool.map((d) => ({ d, ...scoreDoc(d, terms) })) : [];
+  return pick(pool, scored, terms, limit);
+}
+
+/** searchNotes for large vaults: scores in slices, letting the UI run in between; stops on abort. */
+export async function searchNotesAsync(docs: SearchDoc[], query: string, opts: SearchOptions & { signal?: AbortSignal } = {}): Promise<SearchHit[]> {
+  const { terms, limit, pool } = prepare(docs, query, opts);
+  const scored: Scored[] = [];
+  const SLICE = 200;
+  for (let i = 0; terms.length && i < pool.length; i += SLICE) {
+    if (opts.signal?.aborted) throw new AbortedError();
+    for (const d of pool.slice(i, i + SLICE)) scored.push({ d, ...scoreDoc(d, terms) });
+    if (i + SLICE < pool.length) await yieldToUI();
+  }
+  if (opts.signal?.aborted) throw new AbortedError();
+  return pick(pool, scored, terms, limit);
 }

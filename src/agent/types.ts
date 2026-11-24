@@ -37,6 +37,14 @@ export interface VaultPort {
   exists(path: string): boolean;
   isFolder(path: string): boolean;
   read(path: string): Promise<string>;
+  /**
+   * Content of a note if it can be read without downloading it, otherwise null. In cloud-synced
+   * vaults (iCloud Drive, OneDrive, Dropbox…) notes may be kept online only, and reading one
+   * blocks until the sync client has downloaded it, or forever when offline. Returns null for
+   * such notes and for reads that take longer than `timeoutMs`. Optional: always-local ports
+   * leave it out and callers fall back to `read`.
+   */
+  readLocal?(path: string, opts: { timeoutMs: number }): Promise<string | null>;
   /** Excluded folders and plugin/config paths: never read or written. */
   isExcluded(path: string): boolean;
   create(path: string, content: string): Promise<void>;
@@ -133,6 +141,8 @@ export interface ToolStep {
   error?: string;
   paths?: string[];
   change?: FileChange;
+  /** Auto mode: what the safety classifier said about this action. */
+  review?: { decision: "allow" | "block" | "error"; reason: string };
   /** Change was written (and not reverted). */
   applied?: boolean;
   reverted?: boolean;

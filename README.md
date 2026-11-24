@@ -130,7 +130,7 @@ The controls under the input, from left to right. Each opens a list upwards: `�
 | **Provider** | Switch between configured providers (the global default is marked). |
 | **Model** | Recently used models first, then all detected models. Search (for example `qwen`, `glm 4.5`), type a custom model ID or refresh the list. |
 | **Effort** | `Low` (default) / `Medium` / `High` / `Max`, sent as `reasoning_effort` (`Max` maps to `xhigh`). If the API rejects it, the plugin falls back or omits it and remembers this per model. |
-| **Mode** | `Ask` / `Accept` / `Auto` (see [Agent](#agent)). |
+| **Mode** | `Manual` (default) / `Accept` / `Auto` permission modes, as in Claude Code (see [Agent](#agent)). |
 | **Send / ✨** | Send the message, or open quick prompts with ✨ (summarize the note, extract key points, outline, explain the selection, …). |
 
 #### Shortcuts
@@ -146,24 +146,26 @@ The controls under the input, from left to right. Each opens a list upwards: `�
 
 ### Agent
 
-With **Settings → Agent → Enable vault tools** on (the default), the model can call tools to search, read and edit your notes during a chat.
+With **Settings → Advanced options → Agent → Enable vault tools** on (the default), the model can call tools to search, read and edit your notes during a chat.
 
 #### Modes
 
-| Mode | Search and read | Create / edit / move | Delete | Good for |
+| Mode | Search and read | Create / edit / move | Delete, external (MCP) tools | Good for |
 | :--- | :---: | :---: | :---: | :--- |
-| **Ask** | Yes (read-only) | No | No | Questions about your notes, research |
-| **Accept** | Yes | Each write shows a diff and asks first | Always asks | Everyday organizing with a check on every change |
-| **Auto** | Yes | Written directly (undoable) | Always asks | Larger tasks you trust the model with |
+| **Manual** (default) | Yes | Each write shows a diff and asks first | Asks | Everyday work with a check on every change |
+| **Accept** | Yes | Written directly (undoable) | Asks | Editing tasks you trust the model with |
+| **Auto** | Yes | A safety classifier reviews each action: allowed ones run, suspicious ones ask you | Same | Larger tasks with a safety net |
+
+The Auto classifier sees only your own messages and the actions requested, never note contents, so instructions hidden in notes cannot get an action approved. It uses the chat's provider and model unless you pick another one under **Settings → Advanced options → Agent → Auto mode safety classifier**. Sessions from 0.2.x are migrated: Ask and Accept become Manual, Auto becomes Accept.
 
 #### Examples and safeguards
 - **Questions about your vault (any mode)**: "Have I written about vector database index types?" The model searches, reads the relevant notes and cites them with `[[note name]]`.
-- **Multi-step tasks (Accept / Auto)**: "Find all notes about AI agents and write a summary to `AI/Overview.md`." The plan appears above the answer, and each tool call can be expanded to see its arguments, result and the notes it used.
+- **Multi-step tasks (any mode)**: "Find all notes about AI agents and write a summary to `AI/Overview.md`." The plan appears above the answer, and each tool call can be expanded to see its arguments, result and the notes it used.
 - **Confirmations and undo**:
-  - In Accept mode every write shows a diff card with **Allow**, **Allow for this task** or **Reject**.
-  - Deleting always needs confirmation and follows Obsidian's "Deleted files" setting (by default the note goes to the trash).
+  - In Manual mode every write shows a diff card with **Allow**, **Allow for this task** or **Reject**.
+  - Deleting asks in Manual and Accept (in Auto the classifier decides) and follows Obsidian's "Deleted files" setting (by default the note goes to the trash).
   - Applied changes can be **undone / re-applied** from their card, and changes across several files have **Undo all**. Notes that are open are edited through the editor, so `Ctrl/Cmd + Z` works too.
-- **Limits and fallback**: by default a task is limited to 20 rounds and 10 file operations, with caps on total tool calls and run time; when a limit is reached the agent stops and summarizes. You can stop at any time. If the model doesn't support tool calling, the chat falls back to a normal reply (Accept / Auto can then only propose edit cards for the notes attached to that message).
+- **Limits and fallback**: by default a task is limited to 20 rounds and 10 file operations, with caps on total tool calls and run time; when a limit is reached the agent stops and summarizes. You can stop at any time. If the model doesn't support tool calling, the chat falls back to a normal reply (edits are then limited to the notes attached to that message: Manual shows them as cards to accept, Accept / Auto write them directly).
 
 ---
 
@@ -257,7 +259,7 @@ Go to **Settings → MCP servers → Add** to give the agent extra tools:
 
 - **Local (stdio)**: the command, its arguments (for example `npx -y @modelcontextprotocol/server-everything`) and environment variables. Desktop only.
 - **Remote (Streamable HTTP)**: the server URL and request headers.
-- **Testing and permissions**: **Test connection** lists the server's tools. Tools of a server marked read-only run in every mode; other servers are unavailable in `Ask` and, in `Accept`, show their arguments and wait for your confirmation before each call.
+- **Testing and permissions**: **Test connection** lists the server's tools. Tools of a server marked read-only run in every mode; other servers show their arguments and wait for your confirmation before each call in `Manual` and `Accept`; in `Auto` the safety classifier decides.
 - **Credentials**: environment variables and headers are stored in SecretStorage.
 
 ---
@@ -302,7 +304,7 @@ Everything stays in your vault; nothing goes through a third-party relay:
 ### Vault and clipboard access
 
 - **File list**: the plugin reads the list of Markdown files in your vault (`getMarkdownFiles`) to let you pick notes to attach, for the agent's search and file tools, and to build the semantic index. Excluded folders are filtered out before anything is read or sent.
-- **Reading and writing notes**: notes are read when you attach them or the agent's tools read them. Notes are only written when you accept an AI edit, or by the agent in Accept / Auto mode as described above.
+- **Reading and writing notes**: notes are read when you attach them or the agent's tools read them. Notes are only written when you accept an AI edit, or by the agent according to the mode described above.
 - **Clipboard**: the plugin only **writes** to the clipboard, when you click "Copy answer" in the chat or "Copy result" in the edit preview. It never reads the clipboard.
 - **Network**: requests go only to the providers and MCP servers you configure.
 

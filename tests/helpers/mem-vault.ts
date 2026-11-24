@@ -7,6 +7,8 @@ export class MemVault implements VaultPort {
   currentPath: string | null = null;
   selection = "";
   writes: string[] = [];
+  /** Set by tests to simulate a cloud-synced vault (VaultPort.readLocal). */
+  readLocal?: (path: string, opts: { timeoutMs: number }) => Promise<string | null>;
 
   constructor(files: Record<string, string> = {}) {
     for (const [k, v] of Object.entries(files)) this.files.set(k, v);

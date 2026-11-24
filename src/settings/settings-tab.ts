@@ -1,4 +1,4 @@
-import { App, Notice, PluginSettingTab, Setting } from "obsidian";
+import { App, PluginSettingTab, Setting, setIcon } from "obsidian";
 import type AIAgentPlugin from "../main";
 import type { ConnectionTestResult, ProviderConfig } from "../providers/base/provider.types";
 import { PROVIDER_PRESETS, newProviderConfig } from "../providers/presets";
@@ -19,6 +19,8 @@ const TASK_LABELS: Record<TaskType, { name: string; desc: string }> = {
 export class AIAgentSettingTab extends PluginSettingTab {
   private testResults = new Map<string, ConnectionTestResult | "pending">();
   private newPresetId = "custom";
+  /** Everything but the providers is folded under “高级选项” (kept open across redraws). */
+  private showAdvanced = false;
 
   constructor(
     app: App,
@@ -33,15 +35,34 @@ export class AIAgentSettingTab extends PluginSettingTab {
     containerEl.addClass("ai-agent-settings");
 
     this.renderProviders(containerEl);
-    this.renderRouting(containerEl);
-    this.renderChatAndContext(containerEl);
-    this.renderPrompts(containerEl);
-    this.renderAgent(containerEl);
-    this.renderMcp(containerEl);
-    this.renderEditing(containerEl);
-    this.renderCompletion(containerEl);
-    this.renderRag(containerEl);
-    this.renderAdvanced(containerEl);
+
+    const toggle = containerEl.createEl("button", {
+      cls: `ai-agent-advanced-toggle${this.showAdvanced ? " is-open" : ""}`,
+      attr: { "aria-expanded": String(this.showAdvanced) },
+    });
+    setIcon(toggle.createSpan({ cls: "ai-agent-advanced-toggle-icon" }), "chevron-right");
+    toggle.createSpan({ text: "高级选项" });
+    toggle.createSpan({ cls: "ai-agent-advanced-toggle-hint", text: "任务路由、对话与上下文、提示词、Agent 与安全分类器、MCP、AI 编辑、行内补全、语义检索、网络与调试" });
+    toggle.addEventListener("click", () => {
+      this.showAdvanced = !this.showAdvanced;
+      this.display();
+    });
+
+    if (this.showAdvanced) {
+      const adv = containerEl.createDiv({ cls: "ai-agent-advanced" });
+      this.renderRouting(adv);
+      this.renderChatAndContext(adv);
+      this.renderPrompts(adv);
+      this.renderAgent(adv);
+      this.renderMcp(adv);
+      this.renderEditing(adv);
+      this.renderCompletion(adv);
+      this.renderRag(adv);
+      this.renderAdvanced(adv);
+    }
+    if (!this.plugin.keys.secure) {
+      containerEl.createDiv({ cls: "ai-agent-empty", text: "当前 Obsidian 版本不支持 SecretStorage，API Key 将保存在插件配置文件中。" });
+    }
   }
 
   /* ------------------------------ Providers ------------------------------ */
@@ -304,7 +325,7 @@ export class AIAgentSettingTab extends PluginSettingTab {
     new Setting(el)
       .setName("启用仓库工具")
       .setDesc(
-        "允许对话中的模型调用工具：搜索笔记、读取笔记、查看链接；在 Accept / Auto 模式下还可以新建、修改、移动和删除笔记（Accept 每次写入前确认，删除总是需要确认）。排除的文件夹对工具不可见。不支持工具调用的模型会自动改用普通对话。",
+        "允许对话中的模型调用工具：搜索、读取笔记，查看链接，新建、修改、移动和删除笔记。写入受输入框下方的模式控制：Manual 每次写入前确认；Accept 直接写入编辑、删除仍需确认；Auto 由安全分类器审查后执行。排除的文件夹对工具不可见。不支持工具调用的模型会自动改用普通对话。",
       )
       .addToggle((t) =>
         t.setValue(s.agentTools).onChange(async (v) => {
@@ -327,6 +348,42 @@ export class AIAgentSettingTab extends PluginSettingTab {
         });
     numeric("最大执行轮次", "一次任务中模型最多调用几轮工具，超过后停止并总结（1–50）。", "agentMaxIterations", 1, 50);
     numeric("最大文件操作数", "一次任务中最多新建、修改、移动或删除几次文件（1–100）。", "agentMaxFileOps", 1, 100);
+    this.renderClassifier(el);
+  }
+
+  /** Auto mode's safety classifier: which model reviews actions (default: the chat's own). */
+  private renderClassifier(el: HTMLElement): void {
+    const s = this.plugin.settings;
+    const cfg = s.providers.find((p) => p.id === s.autoClassifierProviderId);
+    new Setting(el)
+      .setName("Auto 模式安全分类器")
+      .setDesc(
+        "Auto 模式下，每个修改、删除笔记或调用外部工具的操作都会先交给这个模型审查：符合你请求的直接执行，可疑的改为询问你。分类器只看到你发送的消息和 Agent 请求的操作，看不到笔记内容。默认使用与对话相同的服务商和模型；可以换成更快或更便宜的模型。",
+      )
+      .addDropdown((d) => {
+        d.addOption("", "与对话相同");
+        for (const p of s.providers) d.addOption(p.id, p.name);
+        d.setValue(cfg ? cfg.id : "").onChange(async (v) => {
+          s.autoClassifierProviderId = v;
+          s.autoClassifierModel = "";
+          await this.plugin.saveSettings();
+          this.display();
+        });
+      })
+      .addText((t) => {
+        t.setPlaceholder(cfg ? cfg.model || "模型 ID" : "与对话模型相同")
+          .setValue(s.autoClassifierModel)
+          .onChange(async (v) => {
+            s.autoClassifierModel = v.trim();
+            await this.plugin.saveSettings();
+          });
+        const models = cfg?.models ?? [];
+        if (models.length) {
+          const list = t.inputEl.parentElement!.createEl("datalist", { attr: { id: "ai-agent-classifier-models" } });
+          for (const m of models) list.createEl("option", { value: m });
+          t.inputEl.setAttr("list", list.id);
+        }
+      });
   }
 
   private renderCompletion(el: HTMLElement): void {
@@ -563,7 +620,7 @@ export class AIAgentSettingTab extends PluginSettingTab {
 
   private renderAdvanced(el: HTMLElement): void {
     const s = this.plugin.settings;
-    new Setting(el).setName("高级").setHeading();
+    new Setting(el).setName("网络与调试").setHeading();
     new Setting(el)
       .setName("网络请求方式")
       .setDesc("自动：桌面端使用 Node 网络栈（不受 CORS 限制）；浏览器 fetch：遵循系统代理，但要求服务端允许跨域。")
@@ -587,8 +644,5 @@ export class AIAgentSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }),
       );
-    if (!this.plugin.keys.secure) {
-      new Notice("当前 Obsidian 版本不支持 SecretStorage，API Key 将保存在插件配置文件中。");
-    }
   }
 }

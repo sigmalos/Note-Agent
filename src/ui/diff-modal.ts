@@ -92,8 +92,8 @@ export class DiffPreviewModal extends Modal {
       new Notice("已复制修改结果");
     });
     this.regenBtn = this.button(footer, "refresh-cw", "重新生成", () => void this.session.generate());
-    this.button(footer, "x", "拒绝", () => this.close());
-    this.acceptBtn = this.button(footer, "check", MODE_LABEL[t.mode] === "替换原文" ? "接受" : `接受（${MODE_LABEL[t.mode]}）`, () => void this.onAccept());
+    this.button(footer, "note-agent-reject", "拒绝", () => this.close());
+    this.acceptBtn = this.button(footer, "note-agent-allow", MODE_LABEL[t.mode] === "替换原文" ? "接受" : `接受（${MODE_LABEL[t.mode]}）`, () => void this.onAccept());
     this.acceptBtn.addClass("mod-cta");
 
     this.scope.register(["Mod"], "Enter", (e) => {

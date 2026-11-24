@@ -31,6 +31,10 @@ export interface PluginSettings {
   /** SRS §4.6.6 limits. */
   agentMaxIterations: number;
   agentMaxFileOps: number;
+  /** Auto mode's safety classifier: provider id ("" = the chat's provider). */
+  autoClassifierProviderId: string;
+  /** Classifier model id ("" = the chat's model, or the chosen provider's current model). */
+  autoClassifierModel: string;
 
   /** Inline ghost-text completion (SRS §4.5). Off by default: it sends requests while typing. */
   completionEnabled: boolean;
@@ -72,6 +76,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   agentTools: true,
   agentMaxIterations: 20,
   agentMaxFileOps: 10,
+  autoClassifierProviderId: "",
+  autoClassifierModel: "",
   completionEnabled: false,
   completionDelayMs: 800,
   completionMaxChars: 200,
@@ -203,6 +209,8 @@ export function normalizeSettings(raw: unknown): PluginSettings {
     agentTools: r.agentTools !== false,
     agentMaxIterations: num(r.agentMaxIterations, DEFAULT_SETTINGS.agentMaxIterations, 1, 50)!,
     agentMaxFileOps: num(r.agentMaxFileOps, DEFAULT_SETTINGS.agentMaxFileOps, 1, 100)!,
+    autoClassifierProviderId: exists(r.autoClassifierProviderId) ? String(r.autoClassifierProviderId) : "",
+    autoClassifierModel: typeof r.autoClassifierModel === "string" ? r.autoClassifierModel.trim() : "",
     completionEnabled: r.completionEnabled === true,
     completionDelayMs: num(r.completionDelayMs, DEFAULT_SETTINGS.completionDelayMs, 200, 5000)!,
     completionMaxChars: num(r.completionMaxChars, DEFAULT_SETTINGS.completionMaxChars, 20, 2000)!,

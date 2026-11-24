@@ -73,11 +73,11 @@ export function agentSlots(turn: AgentTurn, streaming: boolean, hooks: AgentRend
     if (step.name === PLAN_TOOL.name) return; // shown as the checklist
     const live = hooks.live && step.status === "awaiting";
     if (step.change) {
-      const sig = sigOf([step.status, step.applied, step.reverted, step.error, live]);
+      const sig = sigOf([step.status, step.summary, step.review, step.applied, step.reverted, step.error, live]);
       const build = () => one((p) => renderChangeCard(p, step, hooks));
       slots.push({ key: `change-${step.id}`, sig, build, update: (el) => refill(el, build()) });
     } else {
-      const sig = sigOf([step.status, step.summary, step.error, step.result, step.paths, step.label, step.detail, live]);
+      const sig = sigOf([step.status, step.summary, step.review, step.error, step.result, step.paths, step.label, step.detail, live]);
       const build = () => one((p) => renderToolRow(p, step, hooks));
       slots.push({ key: `tool-${step.id}`, sig, build, update: (el) => refill(el, build()) });
     }
@@ -177,6 +177,7 @@ function renderToolRow(body: HTMLElement, step: ToolStep, hooks: AgentRenderHook
   if (step.error) inner.createDiv({ cls: "ai-agent-tool-error", text: step.error });
   else if (step.result) inner.createEl("pre", { cls: "ai-agent-tool-result", text: prettyResult(step.result) });
 
+  renderReview(inner, step);
   if (step.status === "awaiting") {
     // External tool waiting for permission: show the arguments and the decision buttons.
     row.open = true;
@@ -186,19 +187,30 @@ function renderToolRow(body: HTMLElement, step: ToolStep, hooks: AgentRenderHook
       const actions = inner.createDiv({ cls: "ai-agent-edit-card-actions" });
       const btn = (icons: string[], text: string, d: Approval, cls = "") => {
         const b = actions.createEl("button", { cls });
-        setIconAny(b.createSpan(), icons);
+        setIconAny(b.createSpan({ cls: "ai-agent-btn-icon" }), icons);
         b.createSpan({ text });
         b.addEventListener("click", () => {
           actions.querySelectorAll("button").forEach((x) => (x.disabled = true));
           hooks.decide(step, d);
         });
       };
-      btn(["check"], "允许", "approve", "mod-cta");
-      btn(["check-check", "check"], "本次任务全部允许", "approve_all");
-      btn(["x"], "拒绝", "reject");
+      btn(["note-agent-allow", "check"], "允许", "approve", "mod-cta");
+      btn(["note-agent-allow-all", "check-check"], "本次任务全部允许", "approve_all");
+      btn(["note-agent-reject", "x"], "拒绝", "reject");
     }
   }
   if (!inner.childElementCount) row.addClass("is-empty");
+}
+
+/** Auto mode: what the safety classifier decided, and why. */
+function renderReview(parent: HTMLElement, step: ToolStep): void {
+  const r = step.review;
+  if (!r) return;
+  const box = parent.createDiv({ cls: `ai-agent-review is-${r.decision}` });
+  setIconAny(box.createSpan({ cls: "ai-agent-review-icon" }), r.decision === "allow" ? ["note-agent-mode-manual", "shield-check"] : ["note-agent-mode-manual", "shield-alert"]);
+  const title = r.decision === "allow" ? "安全分类器已放行" : r.decision === "block" ? "安全分类器拦截，需要你确认" : "未能完成安全检查";
+  box.createSpan({ cls: "ai-agent-review-title", text: title });
+  if (r.reason) box.createSpan({ cls: "ai-agent-review-reason", text: r.reason });
 }
 
 function prettyResult(text: string): string {
@@ -246,7 +258,8 @@ function renderChangeCard(body: HTMLElement, step: ToolStep, hooks: AgentRenderH
     denied: "不允许",
     running: "执行中…",
   };
-  head.createSpan({ cls: "ai-agent-edit-card-status", text: c.kind === "delete" && state === "done" ? "已删除" : STATUS[state] ?? "" });
+  const statusText = state === "running" && step.summary ? step.summary : c.kind === "delete" && state === "done" ? "已删除" : STATUS[state] ?? "";
+  head.createSpan({ cls: "ai-agent-edit-card-status", text: statusText });
 
   const diff = card.createDiv({ cls: "ai-agent-edit-card-diff" });
   if (c.kind === "rename") {
@@ -268,11 +281,12 @@ function renderChangeCard(body: HTMLElement, step: ToolStep, hooks: AgentRenderH
     if (f.skippedBottom) diff.createDiv({ cls: "ai-agent-diff-gap", text: "⋯" });
   }
   if (step.error) card.createDiv({ cls: "ai-agent-edit-card-error", text: step.error });
+  renderReview(card, step);
 
   const actions = card.createDiv({ cls: "ai-agent-edit-card-actions" });
   const btn = (icons: string[], text: string, onClick: () => void, cls = "") => {
     const b = actions.createEl("button", { cls });
-    setIconAny(b.createSpan(), icons);
+    setIconAny(b.createSpan({ cls: "ai-agent-btn-icon" }), icons);
     b.createSpan({ text });
     b.addEventListener("click", () => {
       actions.querySelectorAll("button").forEach((x) => (x.disabled = true));
@@ -281,13 +295,13 @@ function renderChangeCard(body: HTMLElement, step: ToolStep, hooks: AgentRenderH
   };
   if (step.status === "awaiting" && hooks.live) {
     const isDelete = c.kind === "delete";
-    btn(["check"], isDelete ? "允许删除" : "允许", () => hooks.decide(step, "approve"), isDelete ? "mod-warning" : "mod-cta");
-    if (!isDelete) btn(["check-check", "check"], "本次任务全部允许", () => hooks.decide(step, "approve_all"));
-    btn(["x"], "拒绝", () => hooks.decide(step, "reject"));
+    btn(isDelete ? ["note-agent-delete", "trash-2"] : ["note-agent-allow", "check"], isDelete ? "允许删除" : "允许", () => hooks.decide(step, "approve"), isDelete ? "mod-warning" : "mod-cta");
+    if (!isDelete) btn(["note-agent-allow-all", "check-check"], "本次任务全部允许", () => hooks.decide(step, "approve_all"));
+    btn(["note-agent-reject", "x"], "拒绝", () => hooks.decide(step, "reject"));
   } else if (step.applied && !step.reverted) {
-    btn(["undo-2", "undo"], "撤销", () => hooks.undo(step));
+    btn(["note-agent-undo", "undo-2"], "撤销", () => hooks.undo(step));
   } else if (step.reverted) {
-    btn(["redo-2", "redo", "check"], "重新应用", () => hooks.reapply(step));
+    btn(["note-agent-redo", "redo-2"], "重新应用", () => hooks.reapply(step));
   }
   if (!actions.childElementCount) actions.remove();
 }

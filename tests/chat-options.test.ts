@@ -6,7 +6,7 @@ import type { ProviderConfig } from "../src/providers/base/provider.types";
 describe("chat options", () => {
   it("falls back to defaults for unknown ids", () => {
     expect(effortOption(undefined).id).toBe("low");
-    expect(modeOption(undefined).id).toBe("ask");
+    expect(modeOption(undefined).id).toBe("manual");
     expect(effortOption("max").short).toBe("Max");
   });
 

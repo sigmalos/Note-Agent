@@ -1,4 +1,5 @@
-import { MarkdownView, TFile, TFolder, getAllTags, normalizePath, type App } from "obsidian";
+import { FileSystemAdapter, MarkdownView, Platform, TFile, TFolder, getAllTags, normalizePath, type App } from "obsidian";
+import { TIMED_OUT, withTimeout } from "../utils/async";
 import type { ObsidianContext } from "../context/obsidian-context";
 import { parentFolder } from "./paths";
 import type { CurrentNote, NoteInfo, VaultPort } from "./types";
@@ -8,7 +9,16 @@ import { ToolError } from "./types";
  * VaultPort on top of Obsidian's APIs. Open notes are read from and written through their
  * editor (fresh content, Ctrl/Cmd+Z works); closed notes go through the vault atomically.
  */
+type StatFn = (path: string) => Promise<{ size: number; blocks?: number }>;
+
+/** Retry a note that was online-only or slow after this long (it may have been downloaded). */
+const UNAVAILABLE_TTL_MS = 10 * 60_000;
+
 export class ObsidianVaultPort implements VaultPort {
+  /** Notes found online-only or too slow to read: path → when, and the mtime then. */
+  private unavailable = new Map<string, { at: number; mtime: number }>();
+  private statFn: StatFn | null | undefined;
+
   constructor(
     private readonly app: App,
     private readonly context: ObsidianContext,
@@ -71,6 +81,56 @@ export class ObsidianVaultPort implements VaultPort {
     const f = this.file(path);
     if (!f) throw new ToolError(`笔记不存在：${path}`);
     return this.app.vault.cachedRead(f);
+  }
+
+  async readLocal(path: string, opts: { timeoutMs: number }): Promise<string | null> {
+    const view = this.openEditor(path);
+    if (view) return view.editor.getValue();
+    const f = this.file(path);
+    if (!f) return null;
+    const mark = this.unavailable.get(f.path);
+    if (mark && mark.mtime === f.stat.mtime && Date.now() - mark.at < UNAVAILABLE_TTL_MS) return null;
+    const markUnavailable = () => {
+      this.unavailable.set(f.path, { at: Date.now(), mtime: f.stat.mtime });
+      return null;
+    };
+    if (await this.isOnlineOnly(f, opts.timeoutMs)) return markUnavailable();
+    const r = await withTimeout(this.app.vault.cachedRead(f), opts.timeoutMs);
+    if (r === TIMED_OUT) return markUnavailable();
+    this.unavailable.delete(f.path);
+    return r;
+  }
+
+  /**
+   * Whether the note's data is not on this device (desktop only). Cloud sync clients on macOS
+   * (iCloud Drive "Optimise Mac Storage", Dropbox / OneDrive / Google Drive via File Provider)
+   * keep online-only files as "dataless" placeholders: full logical size, no allocated blocks.
+   * Reading one triggers a download; stat does not.
+   */
+  private async isOnlineOnly(f: TFile, timeoutMs: number): Promise<boolean> {
+    const stat = this.stat();
+    if (!stat || f.stat.size === 0) return false;
+    const adapter = this.app.vault.adapter as FileSystemAdapter;
+    const r = await withTimeout(
+      stat(adapter.getFullPath(f.path)).catch(() => null),
+      timeoutMs,
+    );
+    if (r === TIMED_OUT) return true;
+    return !!r && r.size > 0 && typeof r.blocks === "number" && r.blocks === 0;
+  }
+
+  private stat(): StatFn | null {
+    if (this.statFn !== undefined) return this.statFn;
+    this.statFn = null;
+    if (Platform.isDesktopApp && this.app.vault.adapter instanceof FileSystemAdapter) {
+      try {
+        const fs = require("fs") as typeof import("node:fs");
+        this.statFn = (p) => fs.promises.stat(p);
+      } catch {
+        /* no Node fs: rely on read timeouts */
+      }
+    }
+    return this.statFn;
   }
 
   isExcluded(path: string): boolean {

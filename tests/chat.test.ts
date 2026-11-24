@@ -125,12 +125,12 @@ describe("helpers", () => {
 
 describe("chat modes", () => {
   it("tells the model what it may do in each mode", () => {
-    expect(buildSystemPrompt("", { mode: "ask" })).toContain("Ask（问答）模式");
-    expect(buildSystemPrompt("", { mode: "ask" })).not.toContain("<<<<<<< SEARCH");
-    const accept = buildSystemPrompt("<context/>", { mode: "accept", editablePaths: ["A.md"] });
-    expect(accept).toContain("Accept 模式");
-    expect(accept).toContain('"A.md"');
-    expect(accept).toContain("<<<<<<< SEARCH");
+    const manual = buildSystemPrompt("<context/>", { mode: "manual", editablePaths: ["A.md"] });
+    expect(manual).toContain("Manual 模式");
+    expect(manual).toContain('"A.md"');
+    expect(manual).toContain("<<<<<<< SEARCH");
+    expect(buildSystemPrompt("", { mode: "accept", editablePaths: ["A.md"] })).toContain("直接写入");
+    expect(buildSystemPrompt("", { mode: "auto", agent: true })).toContain("安全审查");
     expect(buildSystemPrompt("", { mode: "auto", editablePaths: [] })).toContain("没有附带任何笔记");
   });
 
@@ -323,7 +323,7 @@ describe("ChatController", () => {
   it("new sessions inherit the previous choices", () => {
     const s = createSession({ providerId: "p", model: "m", effort: "max", mode: "auto" });
     expect(s).toMatchObject({ providerId: "p", model: "m", effort: "max", mode: "auto", messages: [] });
-    expect(createSession()).toMatchObject({ providerId: "", model: "", effort: "low", mode: "ask" });
+    expect(createSession()).toMatchObject({ providerId: "", model: "", effort: "low", mode: "manual", modeSchema: 2 });
   });
 
   it("marks errors with a user-facing message and supports regenerate", async () => {
@@ -371,5 +371,18 @@ describe("ChatController", () => {
     const { c } = controller(session, p);
     await c.send("q");
     expect(session.messages[1].status).toBe("error");
+  });
+});
+
+describe("mode migration", () => {
+  it("maps pre-0.3 modes: ask/accept → manual, auto → accept", async () => {
+    const { upgradeSession } = await import("../src/chat/session-manager");
+    const old = { ...createSession(), modeSchema: undefined, mode: "auto", messages: [{ id: "a", role: "assistant", content: "", timestamp: 0, mode: "accept" }] } as never;
+    const up = upgradeSession(old);
+    expect(up).toMatchObject({ mode: "accept", modeSchema: 2 });
+    expect(up.messages[0].mode).toBe("manual");
+    expect(upgradeSession({ ...createSession(), modeSchema: undefined, mode: "ask" } as never).mode).toBe("manual");
+    // Current sessions are left alone.
+    expect(upgradeSession(createSession({ mode: "auto" })).mode).toBe("auto");
   });
 });

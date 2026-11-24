@@ -4,7 +4,9 @@ import { AgentRunner, agentStatusNote, type AgentTarget, type Approval } from ".
 import { normalizeVaultPath, resolveNotePath } from "../src/agent/paths";
 import { parseArguments, validateInput } from "../src/agent/schema";
 import { queryTerms, searchNotes } from "../src/agent/search";
-import { TOOLS, toolByName, toolsForMode } from "../src/agent/tools";
+import { TOOLS, agentTools, toolByName } from "../src/agent/tools";
+import { parseVerdict, buildClassifierMessages, type Classifier } from "../src/agent/classifier";
+import { loadSearchDocs } from "../src/agent/vault-scan";
 import { DEFAULT_LIMITS, ToolError, type ToolStep } from "../src/agent/types";
 import type { ChatChunk, ChatRequest, LLMProvider, ToolCall } from "../src/providers/base/provider.types";
 import { LLMError } from "../src/providers/base/errors";
@@ -109,11 +111,11 @@ describe("tools", () => {
     });
   });
 
-  it("offers read tools only in Ask mode", () => {
-    expect(toolsForMode("ask").map((t) => t.permission)).not.toContain("write");
-    expect(toolsForMode("auto").length).toBe(TOOLS.length);
-    expect(toolsForMode("auto", { semantic: true }).length).toBe(TOOLS.length + 1);
-    expect(toolsForMode("ask").map((t) => t.name)).not.toContain("semantic_search");
+  it("offers every tool; semantic search only when enabled", () => {
+    expect(agentTools().map((t) => t.permission)).toContain("write");
+    expect(agentTools().length).toBe(TOOLS.length);
+    expect(agentTools({ semantic: true }).length).toBe(TOOLS.length + 1);
+    expect(agentTools().map((t) => t.name)).not.toContain("semantic_search");
   });
 });
 
@@ -170,7 +172,7 @@ function scripted(turns: Turn[], seen: ChatRequest[] = []): LLMProvider {
   };
 }
 
-function runner(provider: LLMProvider, v: MemVault, mode: "ask" | "accept" | "auto", decide: (s: ToolStep) => Approval = () => "approve", extra: Partial<ConstructorParameters<typeof AgentRunner>[0]> = {}) {
+function runner(provider: LLMProvider, v: MemVault, mode: "manual" | "accept" | "auto", decide: (s: ToolStep) => Approval = () => "approve", extra: Partial<ConstructorParameters<typeof AgentRunner>[0]> = {}) {
   const asked: string[] = [];
   const ctrl = new AbortController();
   const r = new AgentRunner({
@@ -204,7 +206,7 @@ describe("AgentRunner", () => {
       ],
       seen,
     );
-    const { r } = runner(p, vault(), "ask");
+    const { r } = runner(p, vault(), "manual");
     const t = target();
     await r.run([{ role: "user", content: "RAG 是什么" }], t);
     expect(t.agent!.state).toBe("completed");
@@ -218,10 +220,10 @@ describe("AgentRunner", () => {
     expect(second[1]).toMatchObject({ role: "assistant", toolCalls: [{ name: "update_plan" }, { name: "search_vault" }] });
     expect(second[3]).toMatchObject({ role: "tool", toolCallId: second[1].toolCalls![1].id });
     expect(second[3].content).toContain("AI/RAG技术架构.md");
-    expect(seen[0].tools!.map((x) => x.name)).not.toContain("update_file");
+    expect(seen[0].tools!.map((x) => x.name)).toContain("update_file");
   });
 
-  it("Accept: asks before writing; reject leaves the note alone, approve_all skips later prompts", async () => {
+  it("Manual: asks before writing; reject leaves the note alone, approve_all skips later prompts", async () => {
     const v = vault();
     const edit = (from: string, to: string) => ({ name: "update_file", args: { path: "AI/RAG技术架构.md", edits: [{ search: from, replace: to }] } });
     const p = scripted([
@@ -231,7 +233,7 @@ describe("AgentRunner", () => {
       { text: "完成" },
     ]);
     const answers: Approval[] = ["reject", "approve_all"];
-    const { r, asked } = runner(p, v, "accept", () => answers.shift() ?? "approve");
+    const { r, asked } = runner(p, v, "manual", () => answers.shift() ?? "approve");
     const t = target();
     await r.run([{ role: "user", content: "改" }], t);
     expect(asked).toEqual(["update_file", "update_file"]);
@@ -244,32 +246,83 @@ describe("AgentRunner", () => {
     expect(agentStatusNote(t.agent)).toContain("（用户拒绝）");
   });
 
-  it("Auto: writes directly but still asks before deleting; Ask denies writes", async () => {
+  it("Accept: writes note edits directly but still asks before deleting", async () => {
     const v = vault();
     const p = scripted([
       { calls: [{ name: "create_file", args: { path: "AI/综述", content: "# 综述" } }, { name: "delete_file", args: { path: "日记/2026-11-12.md" } }] },
       { text: "好了" },
     ]);
-    const { r, asked } = runner(p, v, "auto", () => "reject");
+    const { r, asked } = runner(p, v, "accept", () => "reject");
     const t = target();
     await r.run([{ role: "user", content: "x" }], t);
     expect(v.files.get("AI/综述.md")).toBe("# 综述");
     expect(v.files.has("日记/2026-11-12.md")).toBe(true);
     expect(asked).toEqual(["delete_file"]);
+  });
 
-    const v2 = vault();
-    const p2 = scripted([{ calls: [{ name: "create_file", args: { path: "x", content: "y" } }] }, { text: "无法修改" }]);
-    const t2 = target();
-    await runner(p2, v2, "ask").r.run([{ role: "user", content: "x" }], t2);
-    expect((t2.agent!.steps[0] as ToolStep).status).toBe("denied");
-    expect(v2.writes).toEqual([]);
+  it("Auto: the classifier lets allowed actions run and sends blocked ones to the user", async () => {
+    const v = vault();
+    const p = scripted([
+      { calls: [{ name: "create_file", args: { path: "AI/综述", content: "# 综述" } }, { name: "delete_file", args: { path: "日记/2026-11-12.md" } }] },
+      { text: "好了" },
+    ]);
+    const reviewed: string[] = [];
+    const classify: Classifier = async (req) => {
+      reviewed.push(req.step.name);
+      expect(req.userMessages).toEqual(["写一篇综述"]);
+      return req.step.name === "delete_file" ? { decision: "block", reason: "用户没有要求删除" } : { decision: "allow", reason: "符合请求" };
+    };
+    const { r, asked } = runner(p, v, "auto", () => "reject", { classify });
+    const t = target();
+    await r.run([{ role: "user", content: "写一篇综述" }], t);
+    expect(reviewed).toEqual(["create_file", "delete_file"]);
+    expect(v.files.get("AI/综述.md")).toBe("# 综述");
+    expect(v.files.has("日记/2026-11-12.md")).toBe(true);
+    expect(asked).toEqual(["delete_file"]);
+    const steps = t.agent!.steps.filter((s) => s.type === "tool") as ToolStep[];
+    expect(steps.map((s) => s.review?.decision)).toEqual(["allow", "block"]);
+    expect(steps[1].status).toBe("rejected");
+  });
+
+  it("Auto: a failing or missing classifier falls back to asking", async () => {
+    const v = vault();
+    const p = scripted([{ calls: [{ name: "append_file", args: { path: "AI/向量数据库.md", content: "追加" } }] }, { text: "x" }]);
+    const { r, asked } = runner(p, v, "auto", () => "approve", {
+      classify: async () => {
+        throw new Error("network");
+      },
+    });
+    const t = target();
+    await r.run([{ role: "user", content: "x" }], t);
+    expect(asked).toEqual(["append_file"]);
+    expect(v.files.get("AI/向量数据库.md")).toContain("追加");
+    expect((t.agent!.steps[0] as ToolStep).review).toMatchObject({ decision: "error" });
+
+    const p2 = scripted([{ calls: [{ name: "append_file", args: { path: "AI/向量数据库.md", content: "再追加" } }] }, { text: "x" }]);
+    const { r: r2, asked: asked2 } = runner(p2, vault(), "auto", () => "reject");
+    await r2.run([{ role: "user", content: "x" }], target());
+    expect(asked2).toEqual(["append_file"]);
+  });
+
+  it("stops a search that is stuck on a note being downloaded", async () => {
+    const v = vault();
+    // A cloud-only note whose read never finishes.
+    v.read = (path: string) => (path === "AI/向量数据库.md" ? new Promise<string>(() => {}) : Promise.resolve(v.files.get(path) ?? ""));
+    const p = scripted([{ calls: [{ name: "search_vault", args: { query: "FAISS" } }] }, { text: "x" }]);
+    const { r, ctrl } = runner(p, v, "manual");
+    const t = target();
+    const run = r.run([{ role: "user", content: "x" }], t);
+    setTimeout(() => ctrl.abort(), 20);
+    await run;
+    expect(t.agent!.state).toBe("cancelled");
+    expect((t.agent!.steps[0] as ToolStep).status).toBe("skipped");
   });
 
   it("reports bad arguments and unknown tools back to the model", async () => {
     const seen: ChatRequest[] = [];
     const p = scripted([{ calls: [{ name: "read_file", args: "{oops" }, { name: "nope", args: {} }, { name: "read_file", args: {} }] }, { text: "抱歉" }], seen);
     const t = target();
-    await runner(p, vault(), "ask").r.run([{ role: "user", content: "x" }], t);
+    await runner(p, vault(), "manual").r.run([{ role: "user", content: "x" }], t);
     const results = seen[1].messages.filter((m) => m.role === "tool").map((m) => m.content);
     expect(results[0]).toMatch(/^错误：参数不是合法的 JSON/);
     expect(results[1]).toBe("错误：未知工具 nope");
@@ -280,7 +333,7 @@ describe("AgentRunner", () => {
     const seen: ChatRequest[] = [];
     const p = scripted([{ calls: [{ name: "search_vault", args: { query: "RAG" } }] }], seen);
     const t = target();
-    const { r } = runner(p, vault(), "ask", undefined, { limits: { ...DEFAULT_LIMITS, maxIterations: 2 } });
+    const { r } = runner(p, vault(), "manual", undefined, { limits: { ...DEFAULT_LIMITS, maxIterations: 2 } });
     await r.run([{ role: "user", content: "x" }], t);
     expect(t.agent!.state).toBe("limit");
     expect(t.agent!.stopReason).toContain("最大执行轮次");
@@ -292,7 +345,7 @@ describe("AgentRunner", () => {
     const v = vault();
     const p = scripted([{ calls: [{ name: "append_file", args: { path: "AI/向量数据库.md", content: "追加" } }] }, { text: "x" }]);
     let ctrlRef: AbortController | null = null;
-    const { r, ctrl } = runner(p, v, "accept", () => "approve", {
+    const { r, ctrl } = runner(p, v, "manual", () => "approve", {
       approve: () => {
         ctrlRef!.abort();
         return new Promise(() => {});
@@ -306,7 +359,7 @@ describe("AgentRunner", () => {
     expect((t.agent!.steps[0] as ToolStep).status).toBe("skipped");
   });
 
-  it("runs extra (MCP) tools: read ones freely, others with confirmation in Accept and not in Ask", async () => {
+  it("runs extra (MCP) tools: read ones freely, others with confirmation in Accept", async () => {
     const calls: string[] = [];
     const mk = (name: string, permission: "read" | "write") => ({
       name,
@@ -330,11 +383,6 @@ describe("AgentRunner", () => {
     const steps = t.agent!.steps.filter((s) => s.type === "tool") as ToolStep[];
     expect(steps.map((s) => [s.label, s.status])).toEqual([["测试 · mcp_t__lookup", "done"], ["测试 · mcp_t__send", "rejected"]]);
     expect(seen[0].tools!.map((x) => x.name)).toEqual(expect.arrayContaining(["mcp_t__lookup", "mcp_t__send"]));
-
-    const seenAsk: ChatRequest[] = [];
-    await runner(scripted([{ text: "hi" }], seenAsk), vault(), "ask", undefined, { extraTools }).r.run([{ role: "user", content: "x" }], target());
-    expect(seenAsk[0].tools!.map((x) => x.name)).toContain("mcp_t__lookup");
-    expect(seenAsk[0].tools!.map((x) => x.name)).not.toContain("mcp_t__send");
   });
 
   it("propagates tools_unsupported so the chat can fall back", async () => {
@@ -342,6 +390,83 @@ describe("AgentRunner", () => {
     p.streamChat = async function* () {
       throw new LLMError("tools_unsupported");
     };
-    await expect(runner(p, vault(), "ask").r.run([{ role: "user", content: "x" }], target())).rejects.toMatchObject({ kind: "tools_unsupported" });
+    await expect(runner(p, vault(), "manual").r.run([{ role: "user", content: "x" }], target())).rejects.toMatchObject({ kind: "tools_unsupported" });
+  });
+});
+
+describe("cloud-synced vaults", () => {
+  it("searches metadata of notes that are not downloaded, without reading them", async () => {
+    const v = vault();
+    const readCalls: string[] = [];
+    v.readLocal = async (path: string) => {
+      readCalls.push(path);
+      return path === "AI/向量数据库.md" ? null : (v.files.get(path) ?? "");
+    };
+    v.read = () => new Promise<string>(() => {});
+    const r = await toolByName("search_vault")!.run!({ query: "向量数据库" }, { port: v, maxReadChars: 1000 });
+    const out = JSON.parse(r.output);
+    expect(out.results[0].path).toBe("AI/向量数据库.md");
+    expect(out.results[0].content_not_searched).toBe(true);
+    expect(out.unread).toContain("1 篇笔记未下载到本地");
+    expect(r.summary).toContain("仅匹配文件名/标签");
+    expect(readCalls).toContain("AI/向量数据库.md");
+  });
+
+  it("stops reading after repeated slow reads and reads only candidates", async () => {
+    let now = 0;
+    const v = vault();
+    const reads: string[] = [];
+    v.read = (path: string) => {
+      reads.push(path);
+      return new Promise<string>(() => {});
+    };
+    const notes = v.listNotes();
+    const { stats } = await loadSearchDocs(v, notes, { readTimeoutMs: 5, maxSlowReads: 2, concurrency: 1, now: () => (now += 10) });
+    expect(stats.read).toBe(0);
+    expect(reads.length).toBe(2);
+    expect(stats.unread).toBe(notes.length);
+
+    const reads2: string[] = [];
+    const v2 = vault();
+    const orig = v2.read.bind(v2);
+    v2.read = (p: string) => (reads2.push(p), orig(p));
+    await toolByName("search_vault")!.run!({ query: "RAG", folder: "日记" }, { port: v2, maxReadChars: 1000 });
+    expect(reads2).toEqual(["日记/2026-11-12.md"]);
+  });
+
+  it("read_file gives up on a note that never downloads", async () => {
+    const v = vault();
+    v.read = () => new Promise<string>(() => {});
+    const ctrl = new AbortController();
+    const p = toolByName("read_file")!.run!({ path: "AI/向量数据库.md" }, { port: v, maxReadChars: 1000, signal: ctrl.signal });
+    ctrl.abort();
+    await expect(p).rejects.toMatchObject({ name: "AbortError" });
+  });
+});
+
+describe("safety classifier", () => {
+  it("parses verdicts leniently and defaults to block", () => {
+    expect(parseVerdict('{"decision":"allow","reason":"ok"}')).toEqual({ decision: "allow", reason: "ok" });
+    expect(parseVerdict('<think>hmm</think>\n```json\n{"decision":"BLOCK","reason":"越界"}\n```')).toEqual({ decision: "block", reason: "越界" });
+    expect(parseVerdict("allow")).toMatchObject({ decision: "allow" });
+    expect(parseVerdict("not sure")).toMatchObject({ decision: "block" });
+  });
+
+  it("shows the classifier the user's words and the action, not note contents", () => {
+    const step: ToolStep = {
+      type: "tool",
+      id: "1",
+      name: "delete_file",
+      args: { path: "a.md" },
+      status: "running",
+      summary: "",
+      change: { kind: "delete", path: "a.md", before: "SECRET NOTE BODY" },
+    };
+    const msgs = buildClassifierMessages({ userMessages: ["整理笔记"], previousActions: ["read_file a.md（done）"], step });
+    const text = msgs.map((m) => m.content).join("\n");
+    expect(text).toContain("整理笔记");
+    expect(text).toContain("read_file a.md");
+    expect(text).toContain("a.md 移到回收站");
+    expect(text).not.toContain("SECRET NOTE BODY");
   });
 });

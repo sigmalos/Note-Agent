@@ -1,6 +1,6 @@
 import { Component, ItemView, Keymap, MarkdownRenderer, Notice, TFile, setIcon, type WorkspaceLeaf } from "obsidian";
 import { ChatController } from "../chat/chat-manager";
-import { EFFORT_OPTIONS, MODE_OPTIONS, effortOption, formatDuration, modeOption, modelChoices } from "../chat/chat-options";
+import { DEFAULT_MODE, EFFORT_OPTIONS, MODE_OPTIONS, effortOption, formatDuration, modeOption, modelChoices } from "../chat/chat-options";
 import { noteEditsOf, parseNoteEdits, resolveEditPath, stripNoteEdits, type NoteEditBlock, type NoteEditRecord } from "../chat/note-edits";
 import { createSession, sessionToMarkdown, type SessionOptions } from "../chat/session-manager";
 import type { ChatMessage, ChatSession } from "../chat/types";
@@ -9,6 +9,7 @@ import { buildContext, type BuiltContext, type ContextItem } from "../core/conte
 import { diffStats, diffText } from "../editor/diff";
 import { applyChange, revertChange } from "../agent/changes";
 import { AgentRunner, type Approval } from "../agent/orchestrator";
+import { modelClassifier, type Classifier } from "../agent/classifier";
 import { DEFAULT_LIMITS, type ToolStep } from "../agent/types";
 import { agentSlots } from "./agent-render";
 import { reconcile, sigOf, type Slot } from "./components/reconcile";
@@ -23,11 +24,11 @@ import { Popover, type PopoverEntry, type PopoverItem, type PopoverOptions } fro
 import { promptText } from "./components/text-input-modal";
 import { ContextViewerModal } from "./context-viewer-modal";
 import { SessionListModal } from "./session-list-modal";
-import type { ProviderConfig } from "../providers/base/provider.types";
+import type { LLMProvider, ProviderConfig } from "../providers/base/provider.types";
 import { rememberModel } from "../settings/settings";
 import { chatText, type CustomPrompt } from "../prompts/custom-prompts";
 import { hostOf } from "../utils/url";
-import { runAsync } from "../utils/async";
+import { abortable, runAsync } from "../utils/async";
 
 /** A composer button that opens an upward list. */
 interface Picker {
@@ -637,7 +638,7 @@ export class ChatView extends ItemView {
         }),
       ),
       { type: "separator" },
-      { type: "note", icon: ["shield-check", "info"], text: "只会修改本轮附带的笔记；Auto 模式的修改可在消息中撤销，也可在编辑器中 Ctrl/Cmd+Z" },
+      { type: "note", icon: ["shield-check", "info"], text: "直接写入的修改都可以在消息中撤销；Auto 模式的安全分类器模型可在设置 → 高级选项中更换" },
     ];
   }
 
@@ -983,7 +984,7 @@ export class ChatView extends ItemView {
     const first = this.sendBusy === null;
     this.sendBusy = busy;
     this.sendBtn.empty();
-    setIcon(this.sendBtn.createSpan({ cls: "ai-agent-send-icon" }), busy ? "square" : "arrow-left");
+    setIconAny(this.sendBtn.createSpan({ cls: "ai-agent-send-icon" }), busy ? ["note-agent-stop", "square"] : ["note-agent-send", "arrow-up"]);
     this.sendBtn.toggleClass("is-busy", busy);
     this.sendBtn.setAttr("aria-label", busy ? "停止生成（Esc）" : "发送（Enter）");
     if (!first) flash(this.sendBtn, "is-swapping");
@@ -1144,7 +1145,7 @@ export class ChatView extends ItemView {
           live: msg.status === "streaming",
         });
       } else if (msg.content) {
-        const canEdit = msg.mode === "accept" || msg.mode === "auto";
+        const canEdit = msg.mode !== undefined;
         const segments = canEdit ? parseNoteEdits(msg.content) : [{ type: "text" as const, text: msg.content }];
         segments.forEach((seg, i) => {
           if (seg.type === "text") {
@@ -1302,13 +1303,16 @@ export class ChatView extends ItemView {
   private async runAgent(req: Parameters<NonNullable<import("../chat/chat-manager").ChatControllerDeps["runAgent"]>>[0]): Promise<void> {
     const s = this.plugin.settings;
     // MCP tools: connect enabled servers (first use takes a moment), skip ones that fail.
-    const extraTools = s.mcpServers.some((x) => x.enabled) ? await this.plugin.mcp.agentTools() : [];
+    // Raced against Stop so a server that never answers does not keep the reply "busy".
+    const extraTools = s.mcpServers.some((x) => x.enabled) ? await abortable(this.plugin.mcp.agentTools(), req.signal) : [];
+    const mode = req.session.mode ?? DEFAULT_MODE;
     const runner = new AgentRunner({
       extraTools,
       provider: req.provider,
       model: req.model,
       effort: req.session.effort,
-      mode: req.session.mode ?? "ask",
+      mode,
+      classify: mode === "auto" ? this.classifierFor(req.provider, req.model) : undefined,
       port: this.plugin.vaultPort,
       limits: { ...DEFAULT_LIMITS, maxIterations: s.agentMaxIterations, maxFileOps: s.agentMaxFileOps },
       maxReadChars: Math.max(4000, Math.min(24_000, s.maxContextTokens)),
@@ -1322,6 +1326,17 @@ export class ChatView extends ItemView {
     } finally {
       this.approvals.clear();
     }
+  }
+
+  /**
+   * Auto mode's safety classifier: the model set in the advanced settings, by default the same
+   * provider and model as the chat.
+   */
+  private classifierFor(chatProvider: LLMProvider, chatModel: string): Classifier {
+    const s = this.plugin.settings;
+    const cfg = s.autoClassifierProviderId ? s.providers.find((p) => p.id === s.autoClassifierProviderId) : undefined;
+    if (cfg) return modelClassifier(this.plugin.router.providerFor(cfg), s.autoClassifierModel || cfg.model);
+    return modelClassifier(chatProvider, s.autoClassifierModel || chatModel);
   }
 
   /** Show the approval card and wait for a click (or stop, which aborts the run). */
@@ -1380,9 +1395,9 @@ export class ChatView extends ItemView {
     return [];
   }
 
-  /** After a reply: register its edits; in Auto mode write them right away. */
+  /** After a reply: register its edits; in Accept / Auto mode write them right away. */
   private async afterReply(session: ChatSession, msg: ChatMessage): Promise<void> {
-    if (msg.mode !== "accept" && msg.mode !== "auto") return;
+    if (!msg.mode) return;
     const blocks = noteEditsOf(msg.content).filter((b) => b.complete);
     if (!blocks.length) return;
     const allowed = this.editablePathsFor(session, msg);
@@ -1393,10 +1408,10 @@ export class ChatView extends ItemView {
         : { index: b.index, path: b.path || "（未指定笔记）", status: "failed", error: "该笔记不在本轮附带的上下文中，未修改。" };
     });
     // A stopped reply may be cut short: never auto-apply it, let the user decide.
-    if (msg.mode !== "auto" || msg.status !== "done") return;
+    if (msg.mode === "manual" || msg.status !== "done") return;
     let applied = 0;
     for (const rec of msg.edits) if (rec.status === "pending" && (await this.writeEdit(msg, rec))) applied++;
-    if (applied) new Notice(`Auto 模式：已修改 ${applied} 处，可在对话中撤销。`);
+    if (applied) new Notice(`${msg.mode === "auto" ? "Auto" : "Accept"} 模式：已修改 ${applied} 处，可在对话中撤销。`);
   }
 
   private blockOf(msg: ChatMessage, index: number): NoteEditBlock | undefined {
@@ -1483,7 +1498,7 @@ export class ChatView extends ItemView {
     }
     const STATUS: Record<string, string> = {
       streaming: "生成中…",
-      pending: msg.mode === "auto" ? "未自动写入" : "待确认",
+      pending: msg.mode === "manual" ? "待确认" : "未自动写入",
       applied: "已写入",
       rejected: "已拒绝",
       reverted: "已撤销",
@@ -1506,9 +1521,9 @@ export class ChatView extends ItemView {
 
     if (!rec || streaming) return;
     const actions = card.createDiv({ cls: "ai-agent-edit-card-actions" });
-    const btn = (icon: string, text: string, action: "accept" | "reject" | "undo" | "retry", cta = false) => {
+    const btn = (icons: string[], text: string, action: "accept" | "reject" | "undo" | "retry", cta = false) => {
       const b = actions.createEl("button", { cls: cta ? "mod-cta" : "" });
-      setIconAny(b.createSpan(), [icon, "undo", "rotate-ccw"]);
+      setIconAny(b.createSpan({ cls: "ai-agent-btn-icon" }), icons);
       b.createSpan({ text });
       b.addEventListener("click", () => {
         b.disabled = true;
@@ -1516,11 +1531,11 @@ export class ChatView extends ItemView {
       });
     };
     if (rec.status === "pending") {
-      btn("check", "接受", "accept", true);
-      btn("x", "拒绝", "reject");
-    } else if (rec.status === "applied") btn("undo-2", "撤销", "undo");
-    else if (rec.status === "failed" && this.blockOf(msg, rec.index) && resolveEditPath(rec.path, this.editablePathsFor(this.session, msg))) btn("refresh-cw", "重试", "retry");
-    else if (rec.status === "reverted" || rec.status === "rejected") btn("check", "重新应用", "accept");
+      btn(["note-agent-allow", "check"], "接受", "accept", true);
+      btn(["note-agent-reject", "x"], "拒绝", "reject");
+    } else if (rec.status === "applied") btn(["note-agent-undo", "undo-2"], "撤销", "undo");
+    else if (rec.status === "failed" && this.blockOf(msg, rec.index) && resolveEditPath(rec.path, this.editablePathsFor(this.session, msg))) btn(["note-agent-redo", "refresh-cw"], "重试", "retry");
+    else if (rec.status === "reverted" || rec.status === "rejected") btn(["note-agent-redo", "check"], "重新应用", "accept");
   }
 
   private onMessagesClick(evt: MouseEvent): void {
