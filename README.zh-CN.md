@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License: MIT">
 </p>
 
-支持任意 **OpenAI 兼容接口**，内置 **DeepSeek、通义千问、智谱 GLM、Moonshot / Kimi、豆包（火山方舟）、MiniMax、百川智能、SiliconFlow、OpenAI** 以及 **Ollama、LM Studio** 等本地模型服务预设，所有配置、会话与索引均保存在本地仓库。
+支持任意 **OpenAI 兼容接口**（OpenAI、DeepSeek、通义千问、智谱 GLM、Moonshot / Kimi、豆包、MiniMax、SiliconFlow 以及 Ollama、LM Studio 等本地服务）和 **Anthropic 兼容接口**（Anthropic Claude 及提供 Anthropic 接口的服务），所有配置、会话与索引均保存在本地仓库。
 
 ---
 
@@ -47,7 +47,7 @@
 ## 核心特性
 
 ### 模型与服务管理
-- **多服务商与自动模型发现**：支持服务商增删改查、复制与默认切换；选择预设后仅需填写 Endpoint 与 API Key，连接测试时通过 `/models` 自动发现可用模型。
+- **多服务商与自动模型发现**：支持服务商增删改查、复制与默认切换；选择接口协议（OpenAI 兼容或 Anthropic 兼容）后仅需填写 Endpoint 与 API Key，连接测试时通过 `/models` 自动发现可用模型。
 - **任务路由与高级参数**：支持为对话、编辑、行内补全及 Embedding 分别指定服务商与模型；提供 Temperature、Max Tokens、Top P、超时时间、自定义 Header 与流式开关等高级选项。
 - **系统级密钥存储**：在 Obsidian 1.11.4+ 中通过 **SecretStorage** 保存 API Key 与 MCP 凭据，不落盘至 `data.json`；日志与报错信息自动脱敏。
 
@@ -96,16 +96,16 @@ npm run build
 
 ### 配置模型服务商
 
-前往 **设置 → Note Agent → 添加服务商**，选择一个内置预设（或选择「OpenAI 兼容（自定义）」），填写以下两项即可：
+前往 **设置 → Note Agent → 添加服务商**，选择「OpenAI 兼容」或「Anthropic 兼容」，填写以下两项即可：
 
 | 配置项 | 说明与示例 |
 | :--- | :--- |
-| **API Endpoint** | 服务地址。仅填域名时会自动补全 `/v1`。示例：<br>• DeepSeek：`https://api.deepseek.com`<br>• 通义千问：`https://dashscope.aliyuncs.com/compatible-mode/v1`<br>• 智谱 GLM：`https://open.bigmodel.cn/api/paas/v4`<br>• Ollama（本地）：`http://localhost:11434/v1` |
+| **API Endpoint** | 服务地址。仅填域名时会自动补全 `/v1`。OpenAI 兼容示例：<br>• DeepSeek：`https://api.deepseek.com`<br>• 通义千问：`https://dashscope.aliyuncs.com/compatible-mode/v1`<br>• 智谱 GLM：`https://open.bigmodel.cn/api/paas/v4`<br>• Ollama（本地）：`http://localhost:11434/v1`<br>Anthropic 兼容示例（请求发往 `{Base URL}/v1/messages`）：<br>• Anthropic：`https://api.anthropic.com`<br>• DeepSeek：`https://api.deepseek.com/anthropic` |
 | **API Key** | 对应平台的密钥（如 `sk-…`）；Ollama、LM Studio 等本地服务可留空。 |
 
 点击 **连接并检测模型**（保存时亦会自动触发）：插件会请求 `/models` 接口校验连通性并拉取模型列表，之后即可在 AI Chat 输入框下方随时切换模型。
 
-- **自动命名**：显示名称留空时，插件会根据预设名称或域名自动生成。
+- **自动命名**：显示名称留空时，插件会根据域名自动生成。
 - **无 `/models` 接口的服务**：可在对话界面的模型选择器中直接输入模型 ID 使用。
 - **任务路由**：可在设置中的「任务路由」分别为对话与 AI 编辑指定不同服务商；AI 编辑默认复用该服务商在对话中最近选择的模型。
 
@@ -365,7 +365,8 @@ src/
 ├── providers/              # 模型适配层（与具体厂商协议解耦）
 │   ├── base/               # LLMProvider 接口、错误体系与工厂
 │   ├── openai/             # OpenAI 兼容适配器（SSE、reasoning_content、<think> 过滤与降级）
-│   └── presets.ts          # 内置服务商预设
+│   ├── anthropic/          # Anthropic Messages 适配器（流式、思考块回传、工具调用与降级）
+│   └── presets.ts          # 接口协议预设（OpenAI 兼容、Anthropic 兼容）
 ├── core/                   # 无 Obsidian 依赖的纯逻辑核心（可在 Node 中直接单测）
 │   ├── http.ts             # Node / fetch 流式传输层
 │   ├── sse.ts              # 增量 SSE 解析器
@@ -404,7 +405,7 @@ tests/                      # 单元测试（含内存 Vault 与 MCP 测试服�
 | **V2.0** | 本地语义检索（RAG 向量索引）、MCP 协议接入（stdio / Streamable HTTP） | ✅ 已实现 |
 | **§4.9.3** | 批量操作先生成整体计划并一次性预览全部修改后再执行 | ⚠️ 部分支持（当前支持逐项确认或「本次任务全部允许」） |
 | **§10.4** | 移动端完整适配 | ⚠️ 尚未完整测试（MCP 本地 stdio 服务仅支持桌面端） |
-| **§7.3** | Anthropic / Gemini 原生协议适配器 | ⏳ 规划中（目前可通过对应 OpenAI 兼容端点接入） |
+| **§7.3** | Anthropic / Gemini 原生协议适配器 | Anthropic ✅ · Gemini ⏳ 规划中（目前可通过其 OpenAI 兼容端点接入） |
 | **V2.0** | 自定义 Skills 与 Agent 工作流编排 | ⏳ 规划中 |
 | **V2.1** | 多 Agent 协作 | ⏳ 规划中 |
 

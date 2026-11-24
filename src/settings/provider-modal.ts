@@ -1,7 +1,7 @@
 import { App, ButtonComponent, Modal, Notice, Setting, TextComponent } from "obsidian";
 import type AIAgentPlugin from "../main";
 import type { ProviderConfig } from "../providers/base/provider.types";
-import { defaultProviderName, getPreset } from "../providers/presets";
+import { defaultProviderName, presetFor } from "../providers/presets";
 import { formatHeaderLines, normalizeProvider, parseHeaderLines } from "./settings";
 
 /**
@@ -36,30 +36,35 @@ export class ProviderModal extends Modal {
 
   onOpen(): void {
     const { contentEl } = this;
-    this.setTitle(this.isNew ? "添加服务商" : `编辑服务商 · ${this.draft.name}`);
+    this.setTitle(this.isNew ? `添加服务商 · ${presetFor(this.draft.protocol).label}` : `编辑服务商 · ${this.draft.name}`);
     contentEl.addClass("ai-agent-provider-modal");
-    const preset = getPreset(this.draft.presetId);
+    const preset = presetFor(this.draft.protocol);
+    const anthropic = this.draft.protocol === "anthropic";
 
     new Setting(contentEl)
       .setName("显示名称")
       .setDesc("显示在 AI Chat 的服务商按钮上。留空时根据服务商或 Endpoint 自动命名。")
       .addText((t) => {
         this.nameInput = t;
-        t.setPlaceholder(defaultProviderName(this.draft.presetId, this.draft.endpoint))
+        t.setPlaceholder(defaultProviderName(this.draft.endpoint))
           .setValue(this.draft.name)
           .onChange((v) => (this.draft.name = v));
       });
 
     new Setting(contentEl)
       .setName("API Endpoint")
-      .setDesc(`OpenAI 兼容的 Base URL。只填域名时会自动补全 /v1。服务商：${preset.label}`)
+      .setDesc(
+        anthropic
+          ? "Anthropic 兼容的 Base URL，例如 https://api.anthropic.com，或第三方服务的 Anthropic 接口地址。请求发往 {Base URL}/v1/messages。"
+          : "OpenAI 兼容的 Base URL。只填域名时会自动补全 /v1。",
+      )
       .addText((t) =>
         t
-          .setPlaceholder("https://api.example.com/v1")
+          .setPlaceholder(preset.example)
           .setValue(this.draft.endpoint)
           .onChange((v) => {
             this.draft.endpoint = v.trim();
-            this.nameInput.setPlaceholder(defaultProviderName(this.draft.presetId, this.draft.endpoint));
+            this.nameInput.setPlaceholder(defaultProviderName(this.draft.endpoint));
           }),
       );
 
@@ -68,14 +73,12 @@ export class ProviderModal extends Modal {
       .setDesc(
         this.plugin.keys.secure
           ? "保存在 Obsidian 安全存储（SecretStorage）中，不会写入插件配置文件。"
-          : preset.requiresKey
-            ? "当前 Obsidian 版本不支持安全存储，密钥将保存在插件配置文件中。"
-            : "本地服务通常无需密钥。",
+          : "当前 Obsidian 版本不支持安全存储，密钥将保存在插件配置文件中。本地服务通常无需密钥。",
       )
       .addText((t) => {
         t.inputEl.type = "password";
         t.inputEl.autocomplete = "off";
-        t.setPlaceholder("sk-...").setValue(this.apiKey).onChange((v) => (this.apiKey = v.trim()));
+        t.setPlaceholder(anthropic ? "sk-ant-..." : "sk-...").setValue(this.apiKey).onChange((v) => (this.apiKey = v.trim()));
         return t;
       })
       .addExtraButton((b) => {
@@ -216,7 +219,7 @@ export class ProviderModal extends Modal {
   private collect(): ProviderConfig {
     const cfg = normalizeProvider({ ...this.draft, customHeaders: parseHeaderLines(this.headersText) }, 0)!;
     cfg.id = this.draft.id;
-    if (!this.draft.name.trim()) cfg.name = defaultProviderName(cfg.presetId, cfg.endpoint);
+    if (!this.draft.name.trim()) cfg.name = defaultProviderName(cfg.endpoint);
     return cfg;
   }
 

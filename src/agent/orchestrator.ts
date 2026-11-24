@@ -116,7 +116,7 @@ export class AgentRunner {
       const reply = await this.callModel(convo, target, turn, tools);
       if (!reply.calls.length) return this.finish(turn, "completed");
 
-      convo.push({ role: "assistant", content: reply.text, toolCalls: reply.calls, reasoning: reply.reasoning || undefined });
+      convo.push({ role: "assistant", content: reply.text, toolCalls: reply.calls, reasoning: reply.reasoning || undefined, nativeContent: reply.nativeContent });
       let stopped: AgentState | null = null;
       for (const call of reply.calls) {
         if (stopped || this.o.signal.aborted) {
@@ -163,11 +163,12 @@ export class AgentRunner {
     target: AgentTarget,
     turn: AgentTurn,
     tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>,
-  ): Promise<{ text: string; reasoning: string; calls: ToolCall[] }> {
+  ): Promise<{ text: string; reasoning: string; calls: ToolCall[]; nativeContent?: unknown[] }> {
     const iterStart = this.now();
     let text = "";
     let reasoning = "";
     const calls: ToolCall[] = [];
+    let nativeContent: unknown[] | undefined;
     // Thinking time accumulates across iterations; the live timer counts from reasoningStartedAt.
     const prevThinking = target.reasoningMs ?? 0;
     let thinking = false;
@@ -200,6 +201,8 @@ export class AgentRunner {
       } else if (chunk.type === "tool_call") {
         endThinking();
         calls.push(chunk.call);
+      } else if (chunk.type === "native_content") {
+        nativeContent = chunk.blocks;
       } else if (chunk.usage) {
         const u = target.usage ?? {};
         target.usage = {
@@ -211,7 +214,7 @@ export class AgentRunner {
       this.o.onUpdate();
     }
     endThinking();
-    return { text, reasoning, calls };
+    return { text, reasoning, calls, nativeContent };
   }
 
   private appendText(turn: AgentTurn, target: AgentTarget, text: string): void {

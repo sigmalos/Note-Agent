@@ -36,16 +36,23 @@ export class AIAgentSettingTab extends PluginSettingTab {
 
     this.renderProviders(containerEl);
 
-    const toggle = containerEl.createEl("button", {
-      cls: `ai-agent-advanced-toggle${this.showAdvanced ? " is-open" : ""}`,
-      attr: { "aria-expanded": String(this.showAdvanced) },
-    });
-    setIcon(toggle.createSpan({ cls: "ai-agent-advanced-toggle-icon" }), "chevron-right");
-    toggle.createSpan({ text: "高级选项" });
-    toggle.createSpan({ cls: "ai-agent-advanced-toggle-hint", text: "任务路由、对话与上下文、提示词、Agent 与安全分类器、MCP、AI 编辑、行内补全、语义检索、网络与调试" });
-    toggle.addEventListener("click", () => {
+    // A heading like “服务商” (same size and weight); the whole row opens and closes it.
+    const toggle = new Setting(containerEl).setName("高级选项").setHeading().setClass("ai-agent-advanced-toggle");
+    const row = toggle.settingEl;
+    if (this.showAdvanced) row.addClass("is-open");
+    row.setAttr("role", "button");
+    row.setAttr("tabindex", "0");
+    row.setAttr("aria-expanded", String(this.showAdvanced));
+    setIcon(toggle.controlEl.createSpan({ cls: "ai-agent-advanced-toggle-icon" }), "chevron-right");
+    const flip = () => {
       this.showAdvanced = !this.showAdvanced;
       this.display();
+    };
+    row.addEventListener("click", flip);
+    row.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
+      flip();
     });
 
     if (this.showAdvanced) {
@@ -71,12 +78,12 @@ export class AIAgentSettingTab extends PluginSettingTab {
     new Setting(el).setName("服务商").setHeading();
     el.createEl("p", {
       cls: "setting-item-description",
-      text: "支持任意 OpenAI 兼容接口（OpenAI、DeepSeek、通义千问、智谱 GLM、Kimi、豆包、MiniMax、Ollama、LM Studio 等）。只需填写 Endpoint 与 API Key，连接成功后会自动检测可用模型，在 AI Chat 输入框下方选择使用哪个模型。",
+      text: "支持 OpenAI 兼容接口（OpenAI、DeepSeek、通义千问、智谱 GLM、Kimi、豆包、MiniMax、Ollama、LM Studio 等）和 Anthropic 兼容接口（Anthropic Claude 及提供 Anthropic 接口的服务）。只需填写 Endpoint 与 API Key，连接成功后会自动检测可用模型，在 AI Chat 输入框下方选择使用哪个模型。",
     });
 
     const { providers, defaultProviderId } = this.plugin.settings;
     if (!providers.length) {
-      el.createDiv({ cls: "ai-agent-empty", text: "尚未添加服务商。请在下方选择服务商预设并点击“添加”。" });
+      el.createDiv({ cls: "ai-agent-empty", text: "尚未添加服务商。请在下方选择接口协议并点击“添加”。" });
     }
 
     for (const p of providers) {
@@ -157,7 +164,7 @@ export class AIAgentSettingTab extends PluginSettingTab {
 
     new Setting(el)
       .setName("添加服务商")
-      .setDesc("选择服务商预设，会自动填好 Endpoint。")
+      .setDesc("选择服务商使用的接口协议，再填写 Endpoint 与 API Key。")
       .addDropdown((d) => {
         for (const preset of PROVIDER_PRESETS) d.addOption(preset.id, preset.label);
         d.setValue(this.newPresetId).onChange((v) => (this.newPresetId = v));

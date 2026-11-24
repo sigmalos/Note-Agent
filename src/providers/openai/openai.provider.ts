@@ -336,7 +336,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
 }
 
 /** Server messages that mean "this model/endpoint does not accept function tools". */
-const TOOLS_REJECTED = /\b(tools?|tool_choice|function[_ ]?call(ing)?)\b.*\b(not|un)\s*(supported|support|allowed|available)|does not support (tools|function)|unsupported.*\btools?\b|unknown (field|parameter).*tools/i;
+export const TOOLS_REJECTED = /\b(tools?|tool_choice|function[_ ]?call(ing)?)\b.*\b(not|un)\s*(supported|support|allowed|available)|does not support (tools|function)|unsupported.*\btools?\b|unknown (field|parameter).*tools/i;
 
 /** OpenAI wire format for a provider-neutral message. */
 export function toWireMessage(m: LLMMessage): Record<string, unknown> {

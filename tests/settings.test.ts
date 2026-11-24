@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { normalizeModelList, normalizeSettings, rememberModel } from "../src/settings/settings";
-import { defaultProviderName, newProviderConfig } from "../src/providers/presets";
+import { PROVIDER_PRESETS, defaultProviderName, newProviderConfig, presetFor } from "../src/providers/presets";
 import { serviceNameOf } from "../src/utils/url";
 import { KeyStore, type SecretStorageLike } from "../src/settings/key-store";
 import { LLMRouter } from "../src/core/llm-router";
@@ -11,11 +11,18 @@ describe("provider names", () => {
     expect(serviceNameOf("https://llmapi.paratera.com")).toBe("Paratera");
     expect(serviceNameOf("api.example.com.cn/v1")).toBe("Example");
     expect(serviceNameOf("http://localhost:11434/v1")).toBe("localhost");
-    expect(defaultProviderName("qwen", "")).toBe("通义千问");
-    expect(defaultProviderName("ollama", "")).toBe("Ollama");
-    expect(defaultProviderName("custom", "https://llmapi.paratera.com")).toBe("Paratera");
-    expect(defaultProviderName("custom", "")).toBe("自定义服务商");
-    expect(newProviderConfig("deepseek", "id")).toMatchObject({ name: "DeepSeek 深度求索", model: "", models: [] });
+    expect(defaultProviderName("https://llmapi.paratera.com")).toBe("Paratera");
+    expect(defaultProviderName("https://api.anthropic.com")).toBe("Anthropic");
+    expect(defaultProviderName("")).toBe("自定义服务商");
+  });
+
+  it("offers one preset per protocol", () => {
+    expect(PROVIDER_PRESETS.map((p) => p.label)).toEqual(["OpenAI 兼容", "Anthropic 兼容"]);
+    expect(newProviderConfig("custom", "id")).toMatchObject({ protocol: "openai-compatible", endpoint: "", name: "", model: "", models: [] });
+    expect(newProviderConfig("anthropic", "id")).toMatchObject({ protocol: "anthropic", presetId: "anthropic", endpoint: "" });
+    // Configs made from the removed vendor presets keep working as OpenAI compatible.
+    expect(presetFor(normalizeSettings({ providers: [{ id: "d", presetId: "deepseek" }] }).providers[0].protocol).label).toBe("OpenAI 兼容");
+    expect(normalizeSettings({ providers: [{ id: "a", protocol: "anthropic" }] }).providers[0].protocol).toBe("anthropic");
   });
 });
 

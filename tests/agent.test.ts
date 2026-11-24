@@ -145,7 +145,7 @@ describe("changes", () => {
 
 /* ------------------------------- runner ------------------------------- */
 
-type Turn = { text?: string; reasoning?: string; calls?: Array<{ name: string; args: unknown }> };
+type Turn = { text?: string; reasoning?: string; calls?: Array<{ name: string; args: unknown }>; native?: unknown[] };
 
 function scripted(turns: Turn[], seen: ChatRequest[] = []): LLMProvider {
   let i = 0;
@@ -167,6 +167,7 @@ function scripted(turns: Turn[], seen: ChatRequest[] = []): LLMProvider {
         const call: ToolCall = { id: `c${i}-${k}`, name: c.name, arguments: typeof c.args === "string" ? c.args : JSON.stringify(c.args) };
         yield { type: "tool_call", call };
       }
+      if (t.native) yield { type: "native_content", blocks: t.native };
       yield { type: "done", usage: { totalTokens: 10 } };
     },
   };
@@ -316,6 +317,15 @@ describe("AgentRunner", () => {
     await run;
     expect(t.agent!.state).toBe("cancelled");
     expect((t.agent!.steps[0] as ToolStep).status).toBe("skipped");
+  });
+
+  it("hands the provider's native turn back with the next request", async () => {
+    const seen: ChatRequest[] = [];
+    const native = [{ type: "thinking", thinking: "t", signature: "sig" }];
+    const p = scripted([{ calls: [{ name: "search_vault", args: { query: "RAG" } }], native }, { text: "x" }], seen);
+    await runner(p, vault(), "manual").r.run([{ role: "user", content: "x" }], target());
+    const assistant = seen[1].messages.find((m) => m.role === "assistant" && m.toolCalls?.length);
+    expect(assistant?.nativeContent).toEqual(native);
   });
 
   it("reports bad arguments and unknown tools back to the model", async () => {

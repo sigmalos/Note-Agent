@@ -1,6 +1,6 @@
 {
   "name": "note-agent",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Note Agent: bring-your-own LLM chat and agent for your vault, AI editing with diff preview, inline completion, prompts, semantic search and MCP.",
   "repository": {
     "type": "git",

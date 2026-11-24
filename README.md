@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License: MIT">
 </p>
 
-Works with any **OpenAI-compatible API**. Presets are included for **DeepSeek, Qwen (DashScope), Zhipu GLM, Moonshot / Kimi, Doubao (Volcano Ark), MiniMax, Baichuan, SiliconFlow and OpenAI**, as well as local servers such as **Ollama and LM Studio**. All settings, chat history and indexes stay in your vault.
+Works with any **OpenAI-compatible API** (OpenAI, DeepSeek, Qwen, Zhipu GLM, Moonshot / Kimi, Doubao, MiniMax, SiliconFlow, and local servers such as Ollama and LM Studio) and any **Anthropic-compatible API** (Anthropic Claude and services that offer an Anthropic endpoint). All settings, chat history and indexes stay in your vault.
 
 ---
 
@@ -40,7 +40,7 @@ Works with any **OpenAI-compatible API**. Presets are included for **DeepSeek, Q
 ## Features
 
 ### Models and providers
-- **Providers with model discovery**: add, edit, copy, delete and set a default provider. Pick a preset, enter the endpoint and API key, and the plugin lists the available models through `/models` when it connects.
+- **Providers with model discovery**: add, edit, copy, delete and set a default provider. Pick the protocol (OpenAI compatible or Anthropic compatible), enter the endpoint and API key, and the plugin lists the available models through `/models` when it connects.
 - **Task routing and advanced options**: choose separate providers and models for chat, editing, inline completion and embeddings. Temperature, max tokens, top P, timeout, custom headers and streaming can be set per provider.
 - **Secure key storage**: on Obsidian 1.11.4+, API keys and MCP credentials are kept in Obsidian's **SecretStorage**, not in `data.json`. Logs and error messages are redacted.
 
@@ -89,16 +89,16 @@ Copy the generated `main.js` together with `manifest.json` and `styles.css` to `
 
 ### Add a provider
 
-Open **Settings → Note Agent → Add provider**, choose a preset (or "OpenAI compatible (custom)") and fill in two fields:
+Open **Settings → Note Agent → Add provider**, choose **OpenAI 兼容** (OpenAI compatible) or **Anthropic 兼容** (Anthropic compatible) and fill in two fields:
 
 | Field | Description and examples |
 | :--- | :--- |
-| **API endpoint** | Base URL. A bare domain gets `/v1` appended. Examples:<br>• DeepSeek: `https://api.deepseek.com`<br>• Qwen: `https://dashscope.aliyuncs.com/compatible-mode/v1`<br>• Zhipu GLM: `https://open.bigmodel.cn/api/paas/v4`<br>• Ollama (local): `http://localhost:11434/v1` |
+| **API endpoint** | Base URL. A bare domain gets `/v1` appended. OpenAI compatible:<br>• DeepSeek: `https://api.deepseek.com`<br>• Qwen: `https://dashscope.aliyuncs.com/compatible-mode/v1`<br>• Zhipu GLM: `https://open.bigmodel.cn/api/paas/v4`<br>• Ollama (local): `http://localhost:11434/v1`<br>Anthropic compatible (requests go to `{Base URL}/v1/messages`):<br>• Anthropic: `https://api.anthropic.com`<br>• DeepSeek: `https://api.deepseek.com/anthropic` |
 | **API key** | The provider's key (for example `sk-…`). Leave empty for local servers such as Ollama or LM Studio. |
 
 Click **Connect and detect models** (saving does this too): the plugin calls `/models` to check the connection and fetch the model list. You then pick the model below the chat input.
 
-- **Automatic naming**: leave the display name empty and it is derived from the preset or the domain.
+- **Automatic naming**: leave the display name empty and it is derived from the domain.
 - **Services without `/models`**: type the model ID directly in the chat's model picker.
 - **Task routing**: under "Task routing", choose different providers for chat and AI editing. AI editing uses the model you last picked for that provider in the chat.
 
@@ -352,7 +352,7 @@ gh attestation verify main.js --repo sigmalos/Note-Agent
 ```text
 src/
 ├── main.ts          # plugin entry: lifecycle, settings, commands, views, network transport
-├── providers/       # model adapters (OpenAI-compatible: SSE, reasoning, tool calls, embeddings)
+├── providers/       # model adapters (OpenAI compatible: SSE, reasoning, tool calls, embeddings; Anthropic Messages: streaming, thinking, tool calls)
 ├── core/            # pure logic: HTTP/SSE, routing, context budget, tokens, prompts
 ├── agent/           # agent: tools and schema validation, path rules, search, loop, changes and undo
 ├── chat/            # sessions and storage, chat controller, options, model catalog, note edits
@@ -384,7 +384,7 @@ The plugin follows the requirements in [`docs/Obsidian-Agent-SRS.md`](docs/Obsid
 | **V2.0** | Local semantic search (RAG), MCP (stdio / Streamable HTTP) | ✅ Done |
 | **§4.9.3** | Preview a whole batch of changes before running it | ⚠️ Partly (per-change approval or "Allow for this task") |
 | **§10.4** | Mobile | ⚠️ Not fully tested (local stdio MCP servers are desktop only) |
-| **§7.3** | Native Anthropic / Gemini adapters | ⏳ Planned (their OpenAI-compatible endpoints work) |
+| **§7.3** | Native Anthropic / Gemini adapters | Anthropic ✅ · Gemini ⏳ planned (its OpenAI-compatible endpoint works) |
 | **V2.0** | Custom skills and agent workflows | ⏳ Planned |
 | **V2.1** | Multi-agent collaboration | ⏳ Planned |
 

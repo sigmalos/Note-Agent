@@ -116,7 +116,7 @@ export function normalizeProvider(raw: unknown, index: number): ProviderConfig |
     id,
     name: typeof r.name === "string" && r.name.trim() ? r.name.trim() : typeof r.model === "string" && r.model ? r.model : id,
     presetId: typeof r.presetId === "string" ? r.presetId : "custom",
-    protocol: "openai-compatible",
+    protocol: r.protocol === "anthropic" ? "anthropic" : "openai-compatible",
     endpoint: typeof r.endpoint === "string" ? r.endpoint.trim() : "",
     apiKey: typeof r.apiKey === "string" ? r.apiKey.trim() : "",
     apiKeySecretId: typeof r.apiKeySecretId === "string" && r.apiKeySecretId ? r.apiKeySecretId : undefined,

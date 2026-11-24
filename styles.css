@@ -1002,8 +1002,7 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 .ai-agent-change .ai-agent-edit-card-kind { color: var(--text-muted); }
 .ai-agent-diff-gap { color: var(--text-faint); line-height: 1; margin: 2px 0; }
 /* ---- flat buttons: solid fills, no shadows, borders or gradients ---- */
-:is(.ai-agent-chat, .ai-agent-diff-modal, .ai-agent-edit-prompt, .ai-agent-session-modal) button:not(.clickable-icon),
-.ai-agent-settings .ai-agent-advanced-toggle {
+:is(.ai-agent-chat, .ai-agent-diff-modal, .ai-agent-edit-prompt, .ai-agent-session-modal) button:not(.clickable-icon) {
   box-shadow: none;
   border: none;
   background-image: none;
@@ -1045,28 +1044,13 @@ body.is-mobile .ai-agent-bottom { padding-bottom: var(--size-4-3); }
 .ai-agent-review-title { color: var(--text-normal); font-weight: var(--font-medium); }
 .ai-agent-review-reason { color: var(--text-muted); }
 
-/* settings: everything except providers folds under “高级选项” */
-.ai-agent-settings .ai-agent-advanced-toggle {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 8px;
-  width: 100%;
-  height: auto;
-  margin: var(--size-4-6) 0 var(--size-4-2);
-  padding: var(--size-4-2) var(--size-4-3);
-  border-radius: var(--radius-m);
-  background: var(--background-secondary);
-  color: var(--text-normal);
-  font-weight: var(--font-semibold);
-  text-align: left;
-  white-space: normal;
-}
-.ai-agent-settings .ai-agent-advanced-toggle:hover { background: var(--background-modifier-hover); }
-.ai-agent-advanced-toggle-icon { display: inline-flex; transition: transform 160ms var(--ai-ease); }
+/* settings: everything except providers folds under “高级选项”, a heading row like “服务商” */
+.ai-agent-settings .ai-agent-advanced-toggle { margin-top: var(--size-4-6); cursor: pointer; }
+.ai-agent-settings .ai-agent-advanced-toggle:hover .ai-agent-advanced-toggle-icon { color: var(--text-normal); }
+.ai-agent-settings .ai-agent-advanced-toggle:focus-visible { box-shadow: 0 0 0 2px var(--background-modifier-border-focus); border-radius: var(--radius-s); outline: none; }
+.ai-agent-advanced-toggle-icon { display: inline-flex; color: var(--text-muted); transition: transform 160ms var(--ai-ease); }
 .ai-agent-advanced-toggle-icon svg { width: 16px; height: 16px; }
 .ai-agent-advanced-toggle.is-open .ai-agent-advanced-toggle-icon { transform: rotate(90deg); }
-.ai-agent-advanced-toggle-hint { flex-basis: 100%; padding-left: 24px; font-size: var(--font-ui-smaller); font-weight: var(--font-normal); color: var(--text-muted); }
 .ai-agent-changed {
   margin: var(--size-4-3) 0 var(--size-2-2);
   padding: 12px 14px;

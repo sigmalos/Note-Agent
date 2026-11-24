@@ -3,7 +3,7 @@
  * never on a vendor's wire format (SRS §7.1).
  */
 
-export type ApiProtocol = "openai-compatible";
+export type ApiProtocol = "openai-compatible" | "anthropic";
 
 export interface ProviderConfig {
   id: string;
@@ -63,6 +63,11 @@ export interface LLMMessage {
   toolCallId?: string;
   /** Reasoning returned with a tool-call turn; some thinking models expect it back. */
   reasoning?: string;
+  /**
+   * assistant: the turn as the provider returned it (Anthropic content blocks with signed
+   * thinking), sent back unchanged by that provider; others ignore it.
+   */
+  nativeContent?: unknown[];
 }
 
 export interface Usage {
@@ -71,7 +76,7 @@ export interface Usage {
   totalTokens?: number;
 }
 
-/** Reasoning depth for thinking models; sent as OpenAI-style `reasoning_effort`. */
+/** Reasoning depth for thinking models: OpenAI-style `reasoning_effort`, Anthropic `output_config.effort`. */
 export type ReasoningEffort = "low" | "medium" | "high" | "max";
 
 export interface ChatRequest {
@@ -101,6 +106,8 @@ export type ChatChunk =
   | { type: "reasoning"; text: string }
   /** Emitted once per call when the stream ends (arguments assembled from deltas). */
   | { type: "tool_call"; call: ToolCall }
+  /** The whole assistant turn in the provider's own format, to put on LLMMessage.nativeContent. */
+  | { type: "native_content"; blocks: unknown[] }
   | { type: "done"; finishReason?: string; usage?: Usage };
 
 export interface EmbeddingRequest {
